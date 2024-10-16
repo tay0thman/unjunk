@@ -558,9 +558,9 @@ echo "............Done Cleaning Windows Temporary Files"
  # Remove-Item "HKCR:\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
 
 # ****************************************************************************************************************************************************Cleanup component Store in a new CMD window
-Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore /source:C:\Windows\WinSxS /LimitAccess
-Dism /Online /Cleanup-Image /restoreHealth /source:C:\Windows\WinSxS /LimitAccess
-Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase /source:C:\Windows\WinSxS /LimitAccess
+Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore
+Dism /Online /Cleanup-Image /restoreHealth
+Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase
 
 freepace41 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select -Object Freespace)
 cleared41 = $freespace40.freespace - $freespace41.freespace
