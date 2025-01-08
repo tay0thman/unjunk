@@ -1,0 +1,1 @@
+Get-AppxPackage -AllUsers | Out-GridView -PassThru | Remove-AppxPackage

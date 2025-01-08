@@ -55,44 +55,41 @@ Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\PacCache\*" -Recurse -Force
 Remove-Item "C:\Autodesk\*" -Recurse -Force
 Remove-Item "$env:AppData\Autodesk\ADPSDK\JSON" -Recurse -Force
 Remove-Item "C:\ProgramData\RevitInterProcess\*" -Recurse -Force
-freespace1 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared1 = $FreeSpaceBefore.freespace - $freespace1.freespace
-write-output ("Cleared [{0:N2}" -f ($cleared1/1GB) + "] Gb of space.")
+$freespace1 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared1 = $FreeSpaceBefore.freespace - $freespace1.freespace
+write-output ("[{0:N2}" -f (($FreeSpaceBefore.Freespace - $freespace1.Freespace)/1GB) + "] Gb has been liberated on C:\.")
 echo "............Done Cleaning Autodesk Files"
 # ***************************************************************************************************************************************************Delete ACCDocs Cache
 Remove-Item "$env:HOMEPATH\ACCDOCS\*" -Recurse -Force
-
-freespace2 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared2 = $freespace1.freespace - $freespace2.freespace
-write-output ("Cleared [{0:N2}" -f ($cleared2/1GB) + "] Gb of space.")
+$freespace2 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+write-output ("[{0:N2}" -f (($Freespace1.Freespace-$Freespace2.FreeSpace)/1GB) + "] Gb has been liberated on C:\.")
 echo "............Done ACCDOCS Files"
 # ***************************************************************************************************************************************************Delete Chaos Vantage Cache
 Remove-Item "$env:LOCALAPPDATA\Chaos Group\Vantage\cache\QtWebEngine\Default\Cache\*" -Recurse -Force
-
-freespace3 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared3 = $freespace2.freespace - $freespace3.freespace
-write-output ("Cleared [{0:N2}" -f ($cleared3/1GB) + "] Gb of space.")
+$freespace3 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared3 = $freespace2.freespace - $freespace3.freespace
+write-output ("[{0:N2}" -f ($cleared3/1GB) + "] Gb has been liberated on C:\.")
 echo "............Done Cleaning Chaos Vantage Files"
 # ***************************************************************************************************************************************************Delete Vray Logs
 # Delete All *.log files located here "C:\Users\tayO\AppData\Roaming\Chaos Group\V-Ray for Rhinoceros\vrayneui"
 Remove-Item "$env:APPDATA\Chaos Group\V-Ray for Rhinoceros\vrayneui\*.log" -Recurse -Force
-freespace4 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared4 = $freespace3.freespace - $freespace4.freespace
+$freespace4 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared4 = $freespace3.freespace - $freespace4.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared4/1GB) + "] Gb of space.")
 echo "............Done Cleaning Vray Logs"
 
 # ***************************************************************************************************************************************************Delete Logitech Ghub Cache
 Remove-Item "C:\ProgramData\LGHUB\cache\*" -Recurse -Force
 Remove-Item "C:\ProgramData\LGHUB\depots\*" -Recurse -Force
-freespace5 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared5 = $freespace4.freespace - $freespace5.freespace
+$freespace5 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared5 = $freespace4.freespace - $freespace5.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared5/1GB) + "] Gb of space.")
 echo "............Done Cleaning Logitech Files"
 # ***************************************************************************************************************************************************Delete Adobe Sensei Cache
 # Remove files located on "C:\Users\tayO\AppData\Roaming\Adobe\Creative Cloud Libraries\*"
 Remove-Item "$env:APPDATA\Adobe\Creative Cloud Libraries\*" -Recurse -Force
-freespace6 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared6 = $freespace5.freespace - $freespace6.freespace
+$freespace6 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared6 = $freespace5.freespace - $freespace6.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared6/1GB) + "] Gb of space.")
 echo "............Done Cleaning Adobe Creative Cloud Files"
 
@@ -103,8 +100,8 @@ Remove-Item "$env:LOCALAPPDATA\Revu\data\Sessions\studio.bluebeam.com\*" -Recurs
 Remove-Item "$env:LOCALAPPDATA\CrashDumps\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\Bluebeam\Revu\21\WebCache" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\Bluebeam\Revu\21\Recovery\*" -Recurse -Force
-freespace7 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared7 = $freespace6.freespace - $freespace7.freespace
+$freespace7 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared7 = $freespace6.freespace - $freespace7.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared7/1GB) + "] Gb of space.")
 echo "............Done Cleaning Bluebeam Files"
 
@@ -114,8 +111,8 @@ Remove-Item "$env:APPDATA\Adobe\Logs\Adobe Illustrator\25.0\Adobe Illustrator\AC
 Remove-Item "$env:AppData\com.adobe.dunamis\*" -Recurse -Force
 Remove-Item "C:\adobeTemp" -Recurse -Force
 del C:\adobeTemp /f /s /q
-freespace8 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared8 = $freespace7.freespace - $freespace8.freespace
+$freespace8 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared8 = $freespace7.freespace - $freespace8.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared8/1GB) + "] Gb of space.")
 echo "............Done Cleaning Adobe Temp Files"
 # ***************************************************************************************************************************************************Delete Mcneel Update
@@ -124,46 +121,46 @@ Remove-Item "$env:LOCALAPPDATA\McNeel\Rhinoceros\6.0\AutoSave\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\McNeel\Rhinoceros\7.0\AutoSave\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\McNeel\Rhinoceros\8.0\AutoSave\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\McNeel\McNeelUpdate\DownloadCache\*" -Recurse -Force
-freepace9 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared9 = $freespace8.freespace - $freespace9.freespace
+$freepace9 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared9 = $freespace8.freespace - $freespace9.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared9/1GB) + "] Gb of space.")
 echo "............Done Cleaning Mcneel Files"
 
 # ***************************************************************************************************************************************************Delete Honeybee Simulations
 Remove-Item "$env:USERPROFILE\simulation\*" -Recurse -Force
 
-freepace10 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared10 = $freespace9.freespace - $freespace10.freespace
+$freepace10 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared10 = $freespace9.freespace - $freespace10.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared10/1GB) + "] Gb of space.")
 echo "............Done Cleaning Honeybee Simulation Files"
 # ***************************************************************************************************************************************************Delete Zoom Error Logs
 Remove-Item "$env:APPDATA\Zoom\logs\*" -Recurse -Force
 Remove-Item "$env:APPDATA\Zoom\data\WebviewCacheX64\bzn01rg8r86wd78tyy1dhw\EBWebView\*" -Recurse -Force
-freepace11 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared11 = $freespace10.freespace - $freespace11.freespace
+$freepace11 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared11 = $freespace10.freespace - $freespace11.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared11/1GB) + "] Gb of space.")
 echo "............Done Cleaning Zoom Cache Files"
 
 # ***************************************************************************************************************************************************Delete Remote Desktop Cache
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Terminal Server Client\Cache\*" -Recurse -Force
-freepace12 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared12 = $freespace11.freespace - $freespace12.freespace
+$freepace12 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared12 = $freespace11.freespace - $freespace12.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared12/1GB) + "] Gb of space.")
 echo "............Done Cleaning Remote Desktop Cache Files"
 
 # ***************************************************************************************************************************************************Delete WDF Cache
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\WDF\*" -Recurse -Force
 Remove-Item "C:\ProgramData\Microsoft\Windows\WDF\*" -Recurse -Force
-freepace13 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared13 = $freespace12.freespace - $freespace13.freespace
+$freepace13 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared13 = $freespace12.freespace - $freespace13.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared13/1GB) + "] Gb of space.")
 echo "............Done Cleaning WDF Cache Files"
 
 # ***************************************************************************************************************************************************Delete Windows Search Index
 # Cleaning up microsoft maps cache
 Remove-Item "C:\ProgramData\Microsoft\MapData\*" -Recurse -Force
-freepace14 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared14 = $freespace13.freespace - $freespace14.freespace
+$freepace14 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared14 = $freespace13.freespace - $freespace14.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared14/1GB) + "] Gb of space.")
 echo "............Done Cleaning Microsoft Maps Cache Files"
 # ***************************************************************************************************************************************************Delete MS Teams Cache
@@ -176,14 +173,14 @@ Remove-Item "$env:LOCALAPPDATA\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microso
 Remove-Item "$env:LOCALAPPDATA\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\Logs\*" -Recurse -Force
 Remove-Item "$env:AppData\Microsoft\Teams\Service Worker\CacheStorage\*" -Recurse -Force
 Remove-Item "$env:AppData\Microsoft\Teams\Cache\*" -Recurse -Force
-freepace15 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared15 = $freespace14.freespace - $freespace15.freespace
+$freepace15 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared15 = $freespace14.freespace - $freespace15.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared15/1GB) + "] Gb of space.")
 echo "............Done Cleaning MS Teams Cache Files"
 # ***************************************************************************************************************************************************Delete Google Earth
 Remove-Item "$env:USERPROFILE\AppData\LocalLow\Google\GoogleEarth\Cache\*" -Recurse -Force
-freepace16 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared16 = $freespace15.freespace - $freespace16.freespace
+$freepace16 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared16 = $freespace15.freespace - $freespace16.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared16/1GB) + "] Gb of space.")
 echo "............Done Cleaning Google Earth Cache"
 
@@ -191,15 +188,18 @@ echo "............Done Cleaning Google Earth Cache"
 #....Google\DriveFS\109972538989880061485\photos_cache_temp
 Remove-Item "$env:LOCALAPPDATA\Google\DriveFS\109972538989880061485\photos_cache_temp" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\Google\DriveFS\logs\*" -Recurse -Force
-freepace17 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared17 = $freespace16.freespace - $freespace17.freespace
+$freepace17 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared17 = $freespace16.freespace - $freespace17.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared17/1GB) + "] Gb of space.")
 echo "............Done Cleaning Google Drive Cache"
+# ***************************************************************************************************************************************************Delete Google update Cache
+Remove-Item "C:\Program Files (x86)\Google\GoogleUpdater\crx_cache\*" -Recurse -Force
+echo "............Done Cleaning Google Update Cache"
 # ***************************************************************************************************************************************************VSCode Cache
 Remove-Item "$env:APPDATA\Code\Cache\*"  -Recurse -Force
 Remove-Item "$env:APPDATA\Code\CachedData\*" -Recurse -Force
-freepace18 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared18 = $freespace17.freespace - $freespace18.freespace
+$freepace18 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared18 = $freespace17.freespace - $freespace18.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared18/1GB) + "] Gb of space.")
 echo "............Done Removing VSCode Cache"
 # ***************************************************************************************************************************************************Internet Download Manager Data
@@ -213,14 +213,14 @@ Remove-Item HKCU:\Software\DownloadManager\7* -Recurse
 Remove-Item HKCU:\Software\DownloadManager\8* -Recurse
 Remove-Item HKCU:\Software\DownloadManager\9* -Recurse
 Remove-Item "C:\Users\tayO\AppData\Roaming\IDM\foldresHistory.txt" -Force
-freepace19 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared19 = $freespace18.freespace - $freespace19.freespace
+$freepace19 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared19 = $freespace18.freespace - $freespace19.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared19/1GB) + "] Gb of space.")
 echo "............Done Cleaning IDMAN Hisotry & Cache Files"
 # ***************************************************************************************************************************************************Teamviewer Cache
 Remove-Item "$env:LOCALAPPDATA\TeamViewer\EdgeBrowserControl\Temporary\*" -Recurse -Force
-freepace20 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared20 = $freespace19.freespace - $freespace20.freespace
+$freepace20 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared20 = $freespace19.freespace - $freespace20.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared20/1GB) + "] Gb of space.")
 echo "............Done Cleaning Teamviewer Cache Files"
 
@@ -228,8 +228,8 @@ echo "............Done Cleaning Teamviewer Cache Files"
 Remove-Item "$env:LOCALAPPDATA\NVIDIA\DXCache\*" -Recurse -Force
 Remove-Item "$env:USERPROFILE\AppData\LocalLow\NVIDIA\PerDriverVersion\DXCache\*" -Recurse -Force
 Remove-Item "$env:USERPROFILE\AppData\Roaming\NVIDIA\ComputeCache\*" -Recurse -Force
-freepace21 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared21 = $freespace20.freespace - $freespace21.freespace
+$freepace21 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared21 = $freespace20.freespace - $freespace21.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared21/1GB) + "] Gb of space.")
 echo "............Done Cleaning Nvidia DX and compute Cache Files"
 # ***************************************************************************************************************************************************Microsoft Edge
@@ -241,16 +241,16 @@ Remove-Item "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Service Worker\S
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Edge\User Data\BrowserMetrics-spare.pma" -Force
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Edge\User Data\\BrowserMetrics\*" -Force -Recurse
 Remove-Item "$env:LOCALAPPDATA\pip\*" -Force -Recurse
-freepace22 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared22 = $freespace21.freespace - $freespace22.freespace
+$freepace22 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared22 = $freespace21.freespace - $freespace22.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared22/1GB) + "] Gb of space.")
 echo "............Done Cleaning Microsoft Edge Cache Files"
 
 # ***************************************************************************************************************************************************Delete Windows Web Cache
 # kill windows host task service
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\WebCache\*" -Recurse -Force
-freepace23 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared23 = $freespace22.freespace - $freespace23.freespace
+$freepace23 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared23 = $freespace22.freespace - $freespace23.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared23/1GB) + "] Gb of space.")
 echo "............Done Cleaning Windows Web Cache Files"
 # ******************************************************************************************************************************************************Delete FFMPEG
@@ -267,8 +267,8 @@ Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\Notifications\*" -Recurse -Forc
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\ActionCenterCache\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\PPBCompat*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\*" -Recurse -Force
-freepace24 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared24 = $freespace23.freespace - $freespace24.freespace
+$freepace24 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared24 = $freespace23.freespace - $freespace24.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared24/1GB) + "] Gb of space.")
 
 echo "............Done Cleaning Windows Hisotry & Cache Files"
@@ -296,8 +296,8 @@ $logpath = "C:\"
 echo "............Removing tmp,old and log files"
 Get-ChildItem $logpath -recurse *.tmp -force | Remove-Item -force -Recurse
 Get-ChildItem $logpath -recurse *.old -force | Remove-Item -force -Recurse
-freepace25 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared25 = $freespace24.freespace - $freespace25.freespace
+$freepace25 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared25 = $freespace24.freespace - $freespace25.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared25/1GB) + "] Gb of space.")
 echo "............Done Removing tmp,old and log files"
 
@@ -307,8 +307,8 @@ Remove-Item "$env:USERPROFILE\AppData\Local\CrashDumps\*" -Recurse -Force
 # ****************************************************************************************************************************************************Cinebench Cache
 Remove-Item "$env:APPDATA\MAXON\*" -Recurse -Force
 Remove-Item "$env:APPDATA\MAXON\Maxon\Cinebench2024_FD9B9CBE\Redshift\Cache\*" -Recurse -Force
-freepace26 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared26 = $freespace25.freespace - $freespace26.freespace
+$freepace26 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared26 = $freespace25.freespace - $freespace26.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared26/1GB) + "] Gb of space.")
 echo "............Done Cleaning Cinebench Cache Files"
 
@@ -316,16 +316,16 @@ echo "............Done Cleaning Cinebench Cache Files"
 $logpath = "C:\Windows\"
 Get-ChildItem $logpath -recurse *.log -force | Remove-Item -Force -Recurse
 Get-ChildItem $logpath -recurse *.dmp -force | Remove-Item -Force -Recurse
-freepace27 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared27 = $freespace26.freespace - $freespace27.freespace
+$freepace27 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared27 = $freespace26.freespace - $freespace27.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared27/1GB) + "] Gb of space.")
 echo "............Done Cleaning System Dump Files"
 # ****************************************************************************************************************************************************Delete Elgato Camera Hub Logs
 Remove-Item "$env:APPDATA\Elgato\CameraHub\logs\*" -Recurse -Force
 Remove-Item "$env:APPDATA\Elgato\CameraHub\SW\*" -Recurse -Force
 Remove-Item "$env:APPDATA\Elgato\CameraHub\Tmp\*" -Recurse -Force
-freepace28 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared28 = $freespace27.freespace - $freespace28.freespace
+$freepace28 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared28 = $freespace27.freespace - $freespace28.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared28/1GB) + "] Gb of space.")
 echo "............Done Cleaning Elgato Camera Hub Logs"
 # ******************************************************************************************************************************************************Game Cache
@@ -338,49 +338,49 @@ Remove-Item "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\webcache_*\*" -Force -Rec
 Remove-Item "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\webcache_*" -Force -Recurse
 Remove-Item "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\Crashes\*" -Force -Recurse
 Remove-Item "$env:LOCALAPPDATA\UnrealDatasmithExporter\Saved\Crashes\*" -Force -Recurse
-freepace29 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared29 = $freespace28.freespace - $freespace29.freespace
+$freepace29 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared29 = $freespace28.freespace - $freespace29.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared29/1GB) + "] Gb of space.")
 echo "............Done Cleaning Game Cache Files"
 
 # ******************************************************************************************************************************************************Nvidia Cache
 remove-item "$env:HOMEPATH\AppData\Local\Nvidia\DXCache\*" -force -recurse
 remove-item "$env:HOMEPATH\AppData\Local\Nvidia\GLCache\*" -force -recurse
-freepace30 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared30 = $freespace29.freespace - $freespace30.freespace
+$freepace30 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared30 = $freespace29.freespace - $freespace30.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared30/1GB) + "] Gb of space.")
 echo "............Done Cleaning Nvidia Cache Files"
 
 # ****************************************************************************************************************************************************InstallShield Leftover
 Remove-Item "C:\Program Files (x86)\InstallShield Installation Information\*" -Recurse -Force
 # Remove-Item "C:\ProgramData\Package Cache\*" -Recurse -Force
-freepace31 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared31 = $freespace30.freespace - $freespace31.freespace
+$freepace31 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared31 = $freespace30.freespace - $freespace31.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared31/1GB) + "] Gb of space.")
 echo "............Done Cleaning Installshield Cache Files"
 
 # ****************************************************************************************************************************************************Google Update Cache
 Remove-Item "C:\Program Files (x86)\Google\Update\Download\*" -Recurse -Force
-freepace32 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared32 = $freespace31.freespace - $freespace32.freespace
+$freepace32 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared32 = $freespace31.freespace - $freespace32.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared32/1GB) + "] Gb of space.")
 echo "............Done Cleaning Google Update Cache Files"
 
 # ****************************************************************************************************************************************************Teamviewer Cache
 Remove-Item "$env:LOCALAPPDATA\TeamViewer\*" -Recurse -Force
-freepace33 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared33 = $freespace32.freespace - $freespace33.freespace
+$freepace33 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared33 = $freespace32.freespace - $freespace33.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared33/1GB) + "] Gb of space.")
 echo "............Done Cleaning Teamviewer Cache Files"
 
 # ***************************************************************************************************************************************************Windows Memory Dump
 Remove-Item "$env:SYSTEMROOT\memory.dmp" -Recurse -Force
-freepace34 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared34 = $freespace33.freespace - $freespace34.freespace
+$freepace34 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared34 = $freespace33.freespace - $freespace34.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared34/1GB) + "] Gb of space.")
 echo "............Done Cleaning Windows Memory Dump Files"
 # ***************************************************************************************************************************************************VSS Shadow Copies
-##vssadmin delete shadows /all /quiet
+vssadmin delete shadows /all /quiet
 # echo "............Done Cleaning VSS Shadow Copies"
 
 # ***************************************************************************************************************************************************Windows Update
@@ -389,8 +389,8 @@ Remove-Item "C:\WINDOWS\SoftwareDistribution\Download" -Recurse -Force
 #Windows.old
 #Rollup Fix Backup
 Remove-Item "C:\Windows\servicing\LCU\*.*" -Recurse -Force
-freepace35 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared35 = $freespace34.freespace - $freespace35.freespace
+$freepace35 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared35 = $freespace34.freespace - $freespace35.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared35/1GB) + "] Gb of space.")
 echo "............Done Cleaning Windows Update Temporary Files"
 # ***************************************************************************************************************************************************Temporary Internet Files
@@ -404,16 +404,16 @@ remove-item "$env:HOMEPATH\AppData\Local\Google\Chrome\User Data\Profile 2\Code 
 # Microsoft Edge
 remove-item "$env:HOMEPATH\AppData\Local\Microsoft\Edge\User Data\Default\Cache\Cache_Data\*" -force -recurse
 remove-item "$env:HOMEPATH\AppData\Local\Microsoft\Edge\User Data\Profile 1\Cache\Cache_Data\*" -force -recurse
-freepace36 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared36 = $freespace35.freespace - $freespace36.freespace
+$freepace36 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared36 = $freespace35.freespace - $freespace36.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared36/1GB) + "] Gb of space.")
 echo "............Done Cleaning Temporary Browser Files"
 
 
 # IE History Cleaned
 RunDll32.exe InetCpl.cpl, ClearMyTracksByProcess 1
-freepace37 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared37 = $freespace36.freespace - $freespace37.freespace
+$freepace37 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared37 = $freespace36.freespace - $freespace37.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared37/1GB) + "] Gb of space.")
 
 echo "............Done Cleaning IE History Tracks"
@@ -427,8 +427,8 @@ remove-item "C:\Windows\Logs\WindowsUpdate\*" -Force -Recurse
 remove-item "C:\ProgramData\USOShared\Logs\User\*" -Force -Recurse
 #....Windows Error Report
 Remove-Item "$env:LOCALAPPDATA\ElevatedDiagnostics\*" -Recurse -Force
-freepace38 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared38 = $freespace37.freespace - $freespace38.freespace
+$freepace38 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared38 = $freespace37.freespace - $freespace38.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared38/1GB) + "] Gb of space.")
 echo "............Done Cleaning Windows Logs"
 
@@ -508,8 +508,8 @@ Remove-Item "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCac
 Remove-Item "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\BagMRU\*" -Recurse -Force
 
 start explorer.exe
-freepace39 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared39 = $freespace38.freespace - $freespace39.freespace
+$freepace39 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared39 = $freespace38.freespace - $freespace39.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared39/1GB) + "] Gb of space.")
 echo "............Done Cleaning Windows Explorer Hisotry Files"
 
@@ -547,8 +547,8 @@ New-Item "$env:APPDATA\Temp" -ItemType Directory
 New-Item "$env:HOMEPATH\AppData\LocalLow\Temp" -ItemType Directory
 
 Remove-Item "$env:LOCALAPPDATA\Packages\5319275A.WhatsAppDesktop_cv1g1gvanyjgm\LocalCache\Roaming\WhatsApp\Service Worker\CacheStorage" -Recurse -Force
-freepace40 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-cleared40 = $freespace39.freespace - $freespace40.freespace
+$freepace40 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared40 = $freespace39.freespace - $freespace40.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared40/1GB) + "] Gb of space.")
 echo "............Done Cleaning Windows Temporary Files"
 
@@ -558,12 +558,12 @@ echo "............Done Cleaning Windows Temporary Files"
  # Remove-Item "HKCR:\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
 
 # ****************************************************************************************************************************************************Cleanup component Store in a new CMD window
-Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore
-Dism /Online /Cleanup-Image /restoreHealth
-Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase
+# Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore
+# Dism.exe /Online /Cleanup-Image /restoreHealth
+# Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase
 
-freepace41 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select -Object Freespace)
-cleared41 = $freespace40.freespace - $freespace41.freespace
+$freepace41 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select -Object Freespace)
+$cleared41 = $freespace40.freespace - $freespace41.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared41/1GB) + "] Gb of space.")
 echo "............Done Cleaning Component Store"
 
@@ -571,8 +571,8 @@ echo "............Done Cleaning Component Store"
 # Use this PowerShell script to find and remove old and unused device drivers from the Windows Driver Store
 # Explanation: http://woshub.com/how-to-remove-unused-drivers-from-driver-store/
 
-$dismOut = dism /online /get-drivers
-$Lines = $dismOut | select -Skip 10
+#$dismOut = dism /online /get-drivers
+#$Lines = $dismOut | select -Skip 10
 $Operation = "theName"
 $Drivers = @()
 foreach ( $Line in $Lines ) {
