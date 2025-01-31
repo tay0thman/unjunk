@@ -150,7 +150,7 @@ echo "............Done Cleaning Remote Desktop Cache Files"
 
 # ***************************************************************************************************************************************************Delete WDF Cache
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\WDF\*" -Recurse -Force
-Remove-Item "C:\ProgramData\Microsoft\Windows\WDF\*" -Recurse -Force
+Remove-Item "C:\ProgramData\Microsoft\WDF\*" -Recurse -Force
 $freepace13 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
 $cleared13 = $freespace12.freespace - $freespace13.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared13/1GB) + "] Gb of space.")
