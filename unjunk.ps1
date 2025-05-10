@@ -120,10 +120,52 @@ Remove-Item "$env:LOCALAPPDATA\McNeel\Rhinoceros\6.0\AutoSave\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\McNeel\Rhinoceros\7.0\AutoSave\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\McNeel\Rhinoceros\8.0\AutoSave\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\McNeel\McNeelUpdate\DownloadCache\*" -Recurse -Force
-$freespace9 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-$cleared9 = $freespace8.freespace - $freespace9.freespace
 write-output ("Cleared [{0:N2}" -f ($cleared9/1GB) + "] Gb of space.")
 Write-Output "............Done Cleaning Mcneel Files"
+# ***************************************************************************************************************************************************Delete Rhino Installation Cache
+# Define the target folder
+$targetFolder = "C:\Windows\Installer"
+
+# Function to get the Subject metadata property
+function Get-FileSubject {
+    param ([string]$filePath)
+
+    try {
+        $shell = New-Object -ComObject Shell.Application
+        $folder = $shell.Namespace((Split-Path $filePath))
+        $item = $folder.ParseName((Split-Path $filePath -Leaf))
+        
+        for ($i = 0; $i -lt 266; $i++) {
+            $name = $folder.GetDetailsOf($folder.Items, $i)
+            if ($name -eq "Subject") {
+                $subject = $folder.GetDetailsOf($item, $i)
+                return $subject
+            }
+        }
+    } catch {
+        Write-Error "Error reading properties for: $filePath"
+    }
+    return $null
+}
+
+# Get all files recursively
+$files = Get-ChildItem -Path $targetFolder -Recurse -File -ErrorAction SilentlyContinue
+
+foreach ($file in $files) {
+    $subject = Get-FileSubject -filePath $file.FullName
+    if ($subject -and $subject -match "Rhino") {
+        try {
+            Write-Host "Deleting: $($file.FullName)" -ForegroundColor Yellow
+            Remove-Item -Path $file.FullName -Force
+        } catch {
+            Write-Warning "Failed to delete: $($file.FullName) - $_"
+        }
+    }
+}
+# Get the free space after deletion
+$freespace9 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
+$cleared9 = $freespace8.freespace - $freespace9.freespace
+
 
 # ***************************************************************************************************************************************************Delete Honeybee Simulations
 Remove-Item "$env:USERPROFILE\simulation\*" -Recurse -Force
