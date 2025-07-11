@@ -51,6 +51,8 @@ Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit 2024\CollaborationC
 Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit 2024\Journals\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit 2025\CollaborationCache\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit 2025\Journals\*" -Recurse -Force
+Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit 2026\CollaborationCache\*" -Recurse -Force
+Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit 2026\Journals\*" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\PacCache\*" -Recurse -Force
 Remove-Item "C:\Autodesk\*" -Recurse -Force
 Remove-Item "$env:AppData\Autodesk\ADPSDK\JSON" -Recurse -Force
@@ -61,7 +63,7 @@ Write-Output "............Done Cleaning Autodesk Files"
 # ***************************************************************************************************************************************************Delete ACCDocs Cache
 Remove-Item "$env:HOMEPATH\ACCDOCS\*" -Recurse -Force
 $freespace2 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
-write-output ("[{0:N2}" -f (($Freespace1.Freespace-$Freespace2.FreeSpace)/1GB) + "] Gb has been liberated on C:\.")
+write-output ("[{0:N2}" -f (($Freespace1.Freespace-$Freespace2.Freespace)/1GB) + "] Gb has been liberated on C:\.")
 Write-Output "............Done ACCDOCS Files"
 # ***************************************************************************************************************************************************Delete Chaos Vantage Cache
 Remove-Item "$env:LOCALAPPDATA\Chaos Group\Vantage\cache\QtWebEngine\Default\Cache\*" -Recurse -Force
