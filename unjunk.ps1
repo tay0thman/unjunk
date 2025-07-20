@@ -57,6 +57,7 @@ Remove-Item "$env:LOCALAPPDATA\Autodesk\Revit\PacCache\*" -Recurse -Force
 Remove-Item "C:\Autodesk\*" -Recurse -Force
 Remove-Item "$env:AppData\Autodesk\ADPSDK\JSON" -Recurse -Force
 Remove-Item "C:\ProgramData\RevitInterProcess\*" -Recurse -Force
+Remove-Item "C:\Autodesk" -Force
 $freespace1 = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object Freespace)
 write-output ("[{0:N2}" -f (($FreeSpaceBefore.Freespace - $freespace1.Freespace)/1GB) + "] Gb has been liberated on C:\.")
 Write-Output "............Done Cleaning Autodesk Files"
