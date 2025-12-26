@@ -477,6 +477,75 @@ write-output ("Cleared [{0:N2}" -f ($cleared38/1GB) + "] Gb of space.")
 Write-Output "............Done Cleaning Windows Logs"
 
 
+# Windows Apps Cleaner
+
+# List of apps with multiple versions piling up
+$pruneList = @(
+    "*Microsoft.DesktopAppInstaller*",       # Winget
+    "*Microsoft.WindowsStore*",              # Microsoft Store
+    "*Microsoft.StorePurchaseApp*",          # Store Purchase & Billing
+    "*Microsoft.SecHealthUI*",               # Windows Security Interface
+    "*NVIDIACorp.NVIDIAControlPanel*",       # NVIDIA Graphics Control
+    "*RealtekSemiconductorCorp.Realtek*",    # Realtek Audio Control
+    "*Microsoft.MicrosoftStickyNotes*",      # Sticky Notes
+    "*Microsoft.WindowsTerminal*",           # Terminal
+    "*Microsoft.WindowsNotepad*",            # Notepad
+    "*Microsoft.LanguageExperiencePack*",    # Language Packs
+    "*Microsoft.WindowsAppRuntime*"          # App Runtimes
+)
+
+Write-Host "Attempting to prune old versions. YOU WILL SEE RED ERRORS - THIS IS NORMAL." -ForegroundColor Yellow
+
+foreach ($app in $pruneList) {
+    Write-Host "Pruning versions for: $app" -ForegroundColor Cyan
+    # Attempts to remove ALL. The system will protect the active one and delete the rest.
+    Get-AppxPackage $app -AllUsers | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+}
+
+Write-Host "Pruning complete." -ForegroundColor Green
+
+# Apps that are safe to remove ONLY if you don't use them
+$bloatApps = @(
+    "*Clipchamp.Clipchamp*",                 # Video Editor
+    "*Microsoft.MixedReality.Portal*",       # VR Portal (Safe to remove if no VR headset)
+    "*Microsoft.XboxGamingOverlay*",         # Xbox Game Bar overlay
+    "*Microsoft.MicrosoftOfficeHub*",        # The generic "Office" dashboard app
+    "*Microsoft.WinDbg*"                     # Debugging tool (unless you are a developer)
+)
+
+foreach ($app in $bloatApps) {
+    Write-Host "Removing $app..." -ForegroundColor Cyan
+    
+    # 1. Remove installed version
+    Get-AppxPackage $app -AllUsers | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+    
+    # 2. Remove the backup 'provisioned' file so it doesn't come back
+    Get-AppxProvisionedPackage -Online | Where-Object {$_.PackageName -like $app} | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+}
+Write-Host "Bloatware removal complete." -ForegroundColor Green
+
+# 1. Clear Delivery Optimization (SharedLimitedTime folder)
+Get-DeliveryOptimizationStatus | Remove-DeliveryOptimizationStatus
+
+# 2. Mark orphaned files for deletion
+Start-Process -FilePath "rundll32.exe" -ArgumentList "AppxDeploymentClient.dll,AppxCleanupOrphanPackages" -Wait
+
+# 3. Deep clean component store
+dism.exe /online /Cleanup-Image /StartComponentCleanup
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # /      \|  \     |        \/      \|  \  |  \      |  \  _  |  |      |  \  |  |       \ /      \|  \  _  |  \/      \       |        |  \  |  |       \|  \     /      \|       \|        |       \ 
 # |  $$$$$$| $$     | $$$$$$$|  $$$$$$| $$\ | $$      | $$ / \ | $$\$$$$$| $$\ | $| $$$$$$$|  $$$$$$| $$ / \ | $|  $$$$$$\      | $$$$$$$| $$  | $| $$$$$$$| $$    |  $$$$$$| $$$$$$$| $$$$$$$| $$$$$$$\
 # | $$   \$| $$     | $$__   | $$__| $| $$$\| $$      | $$/  $\| $$ | $$ | $$$\| $| $$  | $| $$  | $| $$/  $\| $| $$___\$$      | $$__    \$$\/  $| $$__/ $| $$    | $$  | $| $$__| $| $$__   | $$__| $$
