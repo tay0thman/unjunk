@@ -156,7 +156,7 @@ $files = Get-ChildItem -Path $targetFolder -Recurse -File -ErrorAction SilentlyC
 
 foreach ($file in $files) {
     $subject = Get-FileSubject -filePath $file.FullName
-    if ($subject -and $subject -match "Rhino") {
+    if ($subject -and $subject -match "Rhino" -and $subject -notmatch "Rhino\.Inside") {
         try {
             Write-Host "Deleting: $($file.FullName)" -ForegroundColor Yellow
             Remove-Item -Path $file.FullName -Force
