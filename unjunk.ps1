@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Master System Maintenance Script (v24 - ProgramData Clean)
+    Master System Maintenance Script (v25 - IDM Clean Added)
 .DESCRIPTION
     1. Smart-Prunes INSTALLED & PROVISIONED App Versions.
     2. Removes Bloatware.
@@ -9,9 +9,10 @@
     5. Cleans Revit, Maxon, InDesign, Bluebeam, Nuget.
     6. Cleans Chaos Cosmos, McNeel, Upscayl, PowerToys Updates.
     7. Cleans Ubisoft Cache, Edge Update Installers, Steam/Adobe Logs.
-    8. Cleans Visual Studio Packages & USOShared Logs (ProgramData).
-    9. Aggressively Cleans Edge Caches.
-    10. Interactive Shadow Copy Toggle.
+    8. Cleans Visual Studio Packages & USOShared Logs.
+    9. Cleans IDM Download List.
+    10. Aggressively Cleans Edge Caches.
+    11. Interactive Shadow Copy Toggle.
 .PARAMETER Force
     Skips confirmation prompts.
 #>
@@ -20,7 +21,7 @@ param()
 
 # --- CONFIGURATION ---
 $ErrorActionPreference = "SilentlyContinue"
-$Host.UI.RawUI.WindowTitle = "Master System Maintenance v24"
+$Host.UI.RawUI.WindowTitle = "Master System Maintenance v25"
 
 # --- ADMIN CHECK ---
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -40,7 +41,7 @@ Write-Host "
   | |  | |/ ____ \____) |  | |  | |____| | \ \ 
   |_|  |_/_/    \_\_____/  |_|  |______|_|  \_\
                                                
-  Master Maintenance (v24 - ProgData Clean)
+  Master Maintenance (v25 - IDM Clean)
 " -ForegroundColor Green
 
 # --- TOGGLE: SHADOW COPIES ---
@@ -102,7 +103,7 @@ Write-Host "`nStarting Free Space: $([math]::round($FreeSpaceBefore/1GB, 2)) GB"
 
 # 2. Kill Processes
 Write-Host "`n--- STEP 1: Stopping Background Processes ---" -ForegroundColor Yellow
-$KillList = @("ms-teams", "idman", "upc", "steam", "EpicGamesLauncher", "OneDrive", "Dropbox", "chrome", "msedge", "firefox", "discord", "cb_launcher", "PowerToys.Run", "upscayl")
+$KillList = @("ms-teams", "idman", "IEMonitor", "upc", "steam", "EpicGamesLauncher", "OneDrive", "Dropbox", "chrome", "msedge", "firefox", "discord", "cb_launcher", "PowerToys.Run", "upscayl")
 foreach ($proc in $KillList) { Stop-TargetProcess $proc }
 
 # 3. Windows Apps Pruning (INSTALLED - User Level)
@@ -190,7 +191,7 @@ foreach ($pattern in $pruneList) {
                      if ([version]$oldPkg.Version -lt [version]$latest.Version) {
                          if ($PSCmdlet.ShouldProcess("$($oldPkg.DisplayName) v$($oldPkg.Version)", "Remove Old Provisioned")) {
                              Write-Host "  [DEL]  Old:    $($oldPkg.Version)" -ForegroundColor Red
-                             Remove-AppxPackage -Online -PackageName $oldPkg.PackageName -ErrorAction SilentlyContinue
+                             Remove-AppxProvisionedPackage -Online -PackageName $oldPkg.PackageName -ErrorAction SilentlyContinue
                          }
                      }
                  }
@@ -289,13 +290,16 @@ foreach ($folder in $FoldersToRemove) {
 # --- CUSTOM USER DATA ANALYSIS CLEANUP ---
 Write-Host "--- Cleaning User-Specific App Junk ---" -ForegroundColor Cyan
 
+# IDM (Internet Download Manager) - NEW
+Remove-JunkPath "$env:APPDATA\IDM\DwnlData\*" "IDM Download List"
+
 # Program Files (x86) Cleanup
 Remove-JunkPath "C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\cache\*" "Ubisoft Game Cache"
 Remove-JunkPath "C:\Program Files (x86)\Microsoft\EdgeUpdate\Download\*" "Edge Update Installers"
 Remove-JunkPath "C:\Program Files (x86)\Steam\logs\*" "Steam Logs (ProgFiles)"
 Remove-JunkPath "C:\Program Files (x86)\Common Files\Adobe\Installers\*.log" "Adobe Installer Logs"
 
-# ProgramData Cleanup (VS Packages & USO Logs) - NEW
+# ProgramData Cleanup (VS Packages & USO Logs)
 Remove-JunkPath "C:\ProgramData\Microsoft\VisualStudio\Packages\*" "Visual Studio Installer Packages"
 Remove-JunkPath "C:\ProgramData\USOShared\Logs\*" "Update Session Orchestrator Logs"
 
