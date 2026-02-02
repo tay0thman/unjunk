@@ -1,18 +1,17 @@
 <#
 .SYNOPSIS
-    Master System Maintenance Script (v25 - IDM Clean Added)
+    Master System Maintenance Script (v27 - Unified Toggle)
 .DESCRIPTION
-    1. Smart-Prunes INSTALLED & PROVISIONED App Versions.
-    2. Removes Bloatware.
-    3. Cleans Junk, Dumps, and Event Logs.
-    4. DELETES "C:\Autodesk", "C:\adobeTemp", and "C:\$WinREAgent".
-    5. Cleans Revit, Maxon, InDesign, Bluebeam, Nuget.
-    6. Cleans Chaos Cosmos, McNeel, Upscayl, PowerToys Updates.
-    7. Cleans Ubisoft Cache, Edge Update Installers, Steam/Adobe Logs.
-    8. Cleans Visual Studio Packages & USOShared Logs.
-    9. Cleans IDM Download List.
+    1. Interactive Toggle for "Deep Clean" (Shadow Copies/Event Logs) vs "Safe Clean".
+    2. Smart-Prunes INSTALLED & PROVISIONED App Versions.
+    3. Removes Bloatware.
+    4. Cleans Junk, Dumps, and Installer Caches.
+    5. DELETES "C:\Autodesk", "C:\adobeTemp", "C:\$WinREAgent".
+    6. Cleans Revit, Maxon, InDesign, Bluebeam, Nuget.
+    7. Cleans Chaos Cosmos, McNeel, Upscayl, PowerToys Updates.
+    8. Cleans Ubisoft Cache, Edge Update Installers, Steam/Adobe Logs.
+    9. Cleans Visual Studio Packages, USOShared Logs, IDM Downloads.
     10. Aggressively Cleans Edge Caches.
-    11. Interactive Shadow Copy Toggle.
 .PARAMETER Force
     Skips confirmation prompts.
 #>
@@ -21,7 +20,7 @@ param()
 
 # --- CONFIGURATION ---
 $ErrorActionPreference = "SilentlyContinue"
-$Host.UI.RawUI.WindowTitle = "Master System Maintenance v25"
+$Host.UI.RawUI.WindowTitle = "Master System Maintenance v27"
 
 # --- ADMIN CHECK ---
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -41,20 +40,26 @@ Write-Host "
   | |  | |/ ____ \____) |  | |  | |____| | \ \ 
   |_|  |_/_/    \_\_____/  |_|  |______|_|  \_\
                                                
-  Master Maintenance (v25 - IDM Clean)
+  Master Maintenance (v27 - Unified)
 " -ForegroundColor Green
 
-# --- TOGGLE: SHADOW COPIES ---
-Write-Host "Shadow Copies (System Restore Points) can take up 10GB+ of space." -ForegroundColor Gray
-$ShadowResponse = Read-Host "Do you want to DELETE all Shadow Copies? (y/N)"
-if ($ShadowResponse -eq "y") { 
-    $CleanShadows = $true 
-    Write-Host " -> Shadow Copies will be DELETED." -ForegroundColor Red
+# --- TOGGLE: DEEP CLEAN (EDR TRIGGER RISK) ---
+Write-Host "--- MODE SELECTION ---" -ForegroundColor Cyan
+Write-Host "Deep Cleaning includes:" -ForegroundColor Gray
+Write-Host " 1. Deleting Volume Shadow Copies (System Restore Points)" -ForegroundColor Gray
+Write-Host " 2. Clearing Windows Event Logs" -ForegroundColor Gray
+Write-Host " 3. Running legacy Disk Cleanup (cleanmgr.exe)" -ForegroundColor Gray
+Write-Host "WARNING: These actions may trigger EDR alerts (CrowdStrike/SentinelOne)." -ForegroundColor Red
+
+$DeepResponse = Read-Host "`nEnable Deep Cleaning? (y/N)"
+if ($DeepResponse -eq "y") { 
+    $DeepClean = $true 
+    Write-Host " -> DEEP CLEANING ENABLED. (Risk of EDR Alert)" -ForegroundColor Red
 } else { 
-    $CleanShadows = $false
-    Write-Host " -> Shadow Copies will be PRESERVED." -ForegroundColor Green
+    $DeepClean = $false
+    Write-Host " -> SAFE MODE ENABLED. (Skipping Shadows/Logs)" -ForegroundColor Green
 }
-Start-Sleep -Seconds 1
+Start-Sleep -Seconds 2
 
 # --- HELPER FUNCTIONS ---
 
@@ -78,22 +83,6 @@ function Remove-JunkPath {
     }
 }
 
-function Get-FileSubject {
-    param ([string]$filePath)
-    try {
-        $shell = New-Object -ComObject Shell.Application
-        $folderPath = Split-Path $filePath
-        $fileName = Split-Path $filePath -Leaf
-        $folder = $shell.Namespace($folderPath)
-        $item = $folder.ParseName($fileName)
-        for ($i = 0; $i -lt 300; $i++) {
-            $name = $folder.GetDetailsOf($folder.Items, $i)
-            if ($name -eq "Subject") { return $folder.GetDetailsOf($item, $i) }
-        }
-    } catch {}
-    return $null
-}
-
 # --- START CLEANUP ---
 
 # 1. Measure Disk Space
@@ -103,7 +92,7 @@ Write-Host "`nStarting Free Space: $([math]::round($FreeSpaceBefore/1GB, 2)) GB"
 
 # 2. Kill Processes
 Write-Host "`n--- STEP 1: Stopping Background Processes ---" -ForegroundColor Yellow
-$KillList = @("ms-teams", "idman", "IEMonitor", "upc", "steam", "EpicGamesLauncher", "OneDrive", "Dropbox", "chrome", "msedge", "firefox", "discord", "cb_launcher", "PowerToys.Run", "upscayl")
+$KillList = @("ms-teams", "idman", "upc", "steam", "EpicGamesLauncher", "OneDrive", "Dropbox", "chrome", "msedge", "firefox", "discord", "cb_launcher", "PowerToys.Run", "upscayl")
 foreach ($proc in $KillList) { Stop-TargetProcess $proc }
 
 # 3. Windows Apps Pruning (INSTALLED - User Level)
@@ -290,7 +279,7 @@ foreach ($folder in $FoldersToRemove) {
 # --- CUSTOM USER DATA ANALYSIS CLEANUP ---
 Write-Host "--- Cleaning User-Specific App Junk ---" -ForegroundColor Cyan
 
-# IDM (Internet Download Manager) - NEW
+# IDM (Internet Download Manager)
 Remove-JunkPath "$env:APPDATA\IDM\DwnlData\*" "IDM Download List"
 
 # Program Files (x86) Cleanup
@@ -379,14 +368,27 @@ if (Test-Path $InstallerTarget) {
     }
 }
 
-# 9. Deep System Cleaning (Shadows + Update + Drivers)
+# 9. Deep System Cleaning (CONDITIONAL)
 Write-Host "`n--- STEP 7: Deep System Cleaning ---" -ForegroundColor Yellow
 
-if ($CleanShadows) {
+if ($DeepClean) {
     if ($PSCmdlet.ShouldProcess("Shadow Copies", "Delete (User Requested)")) {
         Write-Host "Deleting VSS Shadow Copies (Silent)..." -ForegroundColor Red
         Start-Process -FilePath "cmd.exe" -ArgumentList "/c vssadmin delete shadows /all /quiet" -Wait -WindowStyle Hidden
     }
+
+    if ($PSCmdlet.ShouldProcess("CleanMgr", "Run Driver Cleanup")) {
+        $CleanMgrKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"
+        $StateFlags = @("Device Driver Packages", "Temporary Files", "Update Cleanup", "Windows Defender")
+        foreach ($flag in $StateFlags) {
+            if (Test-Path "$CleanMgrKey\$flag") {
+                Set-ItemProperty -Path "$CleanMgrKey\$flag" -Name StateFlags1221 -Type DWORD -Value 2
+            }
+        }
+        Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/sagerun:1221" -Wait -WindowStyle Hidden
+    }
+} else {
+    Write-Host "Skipping Shadow Copy and Disk Cleanup (Safe Mode)." -ForegroundColor Green
 }
 
 if ($PSCmdlet.ShouldProcess("WindowsUpdate", "Stop Service & Clean")) {
@@ -400,30 +402,23 @@ if ($PSCmdlet.ShouldProcess("DISM", "Component Store Cleanup")) {
     Start-Process -FilePath "dism.exe" -ArgumentList "/online /Cleanup-Image /StartComponentCleanup /Quiet /NoRestart" -Wait -WindowStyle Hidden
 }
 
-if ($PSCmdlet.ShouldProcess("CleanMgr", "Run Driver Cleanup")) {
-    $CleanMgrKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"
-    $StateFlags = @("Device Driver Packages", "Temporary Files", "Update Cleanup", "Windows Defender")
-    foreach ($flag in $StateFlags) {
-        if (Test-Path "$CleanMgrKey\$flag") {
-            Set-ItemProperty -Path "$CleanMgrKey\$flag" -Name StateFlags1221 -Type DWORD -Value 2
-        }
-    }
-    Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/sagerun:1221" -Wait -WindowStyle Hidden
-}
-
-# 10. Event Viewer Cleaner
+# 10. Event Viewer Cleaner (CONDITIONAL)
 Write-Host "`n--- STEP 8: Clearing Event Viewer Logs ---" -ForegroundColor Yellow
-if ($PSCmdlet.ShouldProcess("All Event Logs", "Clear via wevtutil")) {
-    Write-Host "Fetching log list..." -ForegroundColor Gray
-    $logs = wevtutil.exe el
-    $count = 0
-    foreach ($log in $logs) {
-        $count++
-        Write-Progress -Activity "Clearing Event Logs" -Status "$log" -PercentComplete (($count / $logs.Count) * 100)
-        wevtutil.exe cl "$log" 2>$null
+if ($DeepClean) {
+    if ($PSCmdlet.ShouldProcess("All Event Logs", "Clear via wevtutil")) {
+        Write-Host "Fetching log list..." -ForegroundColor Gray
+        $logs = wevtutil.exe el
+        $count = 0
+        foreach ($log in $logs) {
+            $count++
+            Write-Progress -Activity "Clearing Event Logs" -Status "$log" -PercentComplete (($count / $logs.Count) * 100)
+            wevtutil.exe cl "$log" 2>$null
+        }
+        Write-Progress -Activity "Clearing Event Logs" -Completed
+        Write-Host "All Event Logs have been cleared." -ForegroundColor Green
     }
-    Write-Progress -Activity "Clearing Event Logs" -Completed
-    Write-Host "All Event Logs have been cleared." -ForegroundColor Green
+} else {
+    Write-Host "Skipping Event Log Clearing (Safe Mode)." -ForegroundColor Green
 }
 
 # --- SUMMARY ---
