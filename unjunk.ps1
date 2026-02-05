@@ -352,18 +352,42 @@ Remove-JunkPath "C:\Program Files (x86)\InstallShield Installation Information\*
 
 # 8. Old Rhino Installers (Subject Check)
 Write-Host "`n--- STEP 6: Scanning for old Rhino Installers ---" -ForegroundColor Yellow
-$InstallerTarget = "C:\Windows\Installer"
-if (Test-Path $InstallerTarget) {
-    $files = Get-ChildItem -Path $InstallerTarget -Recurse -File -ErrorAction SilentlyContinue
-    foreach ($file in $files) {
-        $subject = Get-FileSubject -filePath $file.FullName
-        if ($subject -and $subject -match "Rhino" -and $subject -notmatch "Rhino\.Inside") {
-            if ($PSCmdlet.ShouldProcess($file.FullName, "Delete Rhino Installer ($subject)")) {
-                try {
-                    Write-Host "Deleting: $($file.FullName)" -ForegroundColor Red
-                    Remove-Item -Path $file.FullName -Force -ErrorAction SilentlyContinue
-                } catch { Write-Warning "Failed to delete: $($file.FullName)" }
+# Define the target folder
+$targetFolder = "C:\Windows\Installer"
+
+# Function to get the Subject metadata property
+function Get-FileSubject {
+    param ([string]$filePath)
+
+    try {
+        $shell = New-Object -ComObject Shell.Application
+        $folder = $shell.Namespace((Split-Path $filePath))
+        $item = $folder.ParseName((Split-Path $filePath -Leaf))
+        
+        for ($i = 0; $i -lt 266; $i++) {
+            $name = $folder.GetDetailsOf($folder.Items, $i)
+            if ($name -eq "Subject") {
+                $subject = $folder.GetDetailsOf($item, $i)
+                return $subject
             }
+        }
+    } catch {
+        Write-Error "Error reading properties for: $filePath"
+    }
+    return $null
+}
+
+# Get all files recursively
+$files = Get-ChildItem -Path $targetFolder -Recurse -File -ErrorAction SilentlyContinue
+
+foreach ($file in $files) {
+    $subject = Get-FileSubject -filePath $file.FullName
+    if ($subject -and $subject -match "Rhino") {
+        try {
+            Write-Host "Deleting: $($file.FullName)" -ForegroundColor Yellow
+            Remove-Item -Path $file.FullName -Force
+        } catch {
+            Write-Warning "Failed to delete: $($file.FullName) - $_"
         }
     }
 }
