@@ -1,17 +1,12 @@
 <#
 .SYNOPSIS
-    Master System Maintenance Script (v27 - Unified Toggle)
+    Master System Maintenance Script (v34 - Silent / Yes to All)
 .DESCRIPTION
-    1. Interactive Toggle for "Deep Clean" (Shadow Copies/Event Logs) vs "Safe Clean".
-    2. Smart-Prunes INSTALLED & PROVISIONED App Versions.
-    3. Removes Bloatware.
-    4. Cleans Junk, Dumps, and Installer Caches.
-    5. DELETES "C:\Autodesk", "C:\adobeTemp", "C:\$WinREAgent".
-    6. Cleans Revit, Maxon, InDesign, Bluebeam, Nuget.
-    7. Cleans Chaos Cosmos, McNeel, Upscayl, PowerToys Updates.
-    8. Cleans Ubisoft Cache, Edge Update Installers, Steam/Adobe Logs.
-    9. Cleans Visual Studio Packages, USOShared Logs, IDM Downloads.
-    10. Aggressively Cleans Edge Caches.
+    1. Interactive Toggle for "Deep Clean" (Shadow Copies/Logs).
+    2. Interactive "Custom File Destroyer" with Reboot Support.
+    3. SILENT EXECUTION: Removes all individual "Are you sure?" prompts.
+    4. NEW: Queues locked files for deletion on next REBOOT (MoveFileEx).
+    5. Smart-Prunes Apps, Cleans Junk, Installer Caches (Autodesk/Adobe).
 .PARAMETER Force
     Skips confirmation prompts.
 #>
@@ -20,7 +15,7 @@ param()
 
 # --- CONFIGURATION ---
 $ErrorActionPreference = "SilentlyContinue"
-$Host.UI.RawUI.WindowTitle = "Master System Maintenance v27"
+$Host.UI.RawUI.WindowTitle = "Master System Maintenance v34"
 
 # --- ADMIN CHECK ---
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -30,7 +25,89 @@ if (-not $IsAdmin) {
     Break
 }
 
-# --- INTERACTIVE TOGGLES ---
+# --- NATIVE API WRAPPER FOR MOVEFILEEX (DELETE ON REBOOT) ---
+$MoveFileCode = @'
+    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+'@
+try {
+    $Kernel32 = Add-Type -MemberDefinition $MoveFileCode -Name "Kernel32Helper" -Namespace "Win32" -PassThru
+} catch {
+    # Type already exists from previous run, ignore error
+}
+
+function Register-DeleteOnReboot {
+    param([string]$FilePath)
+    # 0x4 = MOVEFILE_DELAY_UNTIL_REBOOT
+    try {
+        [Win32.Kernel32Helper]::MoveFileEx($FilePath, $null, 4)
+    } catch {
+        Write-Warning "Failed to register $FilePath for reboot deletion."
+    }
+}
+
+# --- HELPER FUNCTIONS ---
+
+function Stop-TargetProcess {
+    param([string]$ProcessName)
+    if (Get-Process -Name $ProcessName -ErrorAction SilentlyContinue) {
+        Write-Host "Stopping process: $ProcessName" -ForegroundColor Yellow
+        Stop-Process -Name $ProcessName -Force -Confirm:$false -ErrorAction SilentlyContinue
+    }
+}
+
+function Remove-JunkPath {
+    param([string]$Path, [string]$Desc)
+    $ExpandedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    
+    if (Test-Path $ExpandedPath) {
+        # PROMPT REMOVED: Auto-confirming deletion
+        Write-Host "Cleaning $Desc..." -ForegroundColor Cyan
+        
+        # Get all items, including hidden
+        $items = Get-ChildItem -Path $ExpandedPath -Recurse -Force -ErrorAction SilentlyContinue
+        
+        foreach ($item in $items) {
+            try {
+                # Added -Confirm:$false to suppress file-level prompts
+                $item | Remove-Item -Recurse -Force -Confirm:$false -ErrorAction Stop
+            } catch {
+                # IF DELETE FAILS: Queue for Reboot
+                # Only show warning for files, not folders (to reduce noise)
+                if (-not $item.PSIsContainer) {
+                    Write-Warning "Locked: $($item.Name). Queueing for deletion on REBOOT."
+                    Register-DeleteOnReboot -FilePath $item.FullName
+                }
+            }
+        }
+        
+        # Try to remove the root folder itself if empty now
+        try { Remove-Item -Path $ExpandedPath -Force -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
+# Improved MSI Reader using WindowsInstaller COM Object
+function Get-MsiProductName {
+    param ([string]$filePath)
+    try {
+        $wi = New-Object -ComObject WindowsInstaller.Installer
+        # 0 = ReadOnly Mode
+        $db = $wi.OpenDatabase($filePath, 0) 
+        $view = $db.OpenView("SELECT Value FROM Property WHERE Property = 'ProductName'")
+        $view.Execute()
+        $record = $view.Fetch()
+        if ($record) { 
+            return $record.StringData(1) 
+        }
+        $view.Close()
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($db) | Out-Null
+    } catch {
+        return $null
+    }
+    return $null
+}
+
+# --- INTERACTIVE MENU ---
 Clear-Host
 Write-Host "
    __  __          _____ _______ ______ _____  
@@ -40,113 +117,74 @@ Write-Host "
   | |  | |/ ____ \____) |  | |  | |____| | \ \ 
   |_|  |_/_/    \_\_____/  |_|  |______|_|  \_\
                                                
-  Master Maintenance (v27 - Unified)
+  Master Maintenance (v34 - Silent Mode)
 " -ForegroundColor Green
 
-# --- TOGGLE: DEEP CLEAN (EDR TRIGGER RISK) ---
-Write-Host "--- MODE SELECTION ---" -ForegroundColor Cyan
-Write-Host "Deep Cleaning includes:" -ForegroundColor Gray
-Write-Host " 1. Deleting Volume Shadow Copies (System Restore Points)" -ForegroundColor Gray
-Write-Host " 2. Clearing Windows Event Logs" -ForegroundColor Gray
-Write-Host " 3. Running legacy Disk Cleanup (cleanmgr.exe)" -ForegroundColor Gray
-Write-Host "WARNING: These actions may trigger EDR alerts (CrowdStrike/SentinelOne)." -ForegroundColor Red
-
-$DeepResponse = Read-Host "`nEnable Deep Cleaning? (y/N)"
-if ($DeepResponse -eq "y") { 
-    $DeepClean = $true 
-    Write-Host " -> DEEP CLEANING ENABLED. (Risk of EDR Alert)" -ForegroundColor Red
-} else { 
-    $DeepClean = $false
-    Write-Host " -> SAFE MODE ENABLED. (Skipping Shadows/Logs)" -ForegroundColor Green
-}
-Start-Sleep -Seconds 2
-
-# --- HELPER FUNCTIONS ---
-
-function Stop-TargetProcess {
-    param([string]$ProcessName)
-    if (Get-Process -Name $ProcessName -ErrorAction SilentlyContinue) {
-        Write-Host "Stopping process: $ProcessName" -ForegroundColor Yellow
-        Stop-Process -Name $ProcessName -Force -ErrorAction SilentlyContinue
+# 1. CUSTOM FILE DESTROYER
+Write-Host "--- 1. CUSTOM FILE DESTROYER ---" -ForegroundColor Cyan
+Write-Host "Paste a path to force delete (or press Enter to skip)." -ForegroundColor Gray
+$CustomPath = Read-Host "Path"
+if ($CustomPath -and (Test-Path $CustomPath)) {
+    Write-Host "Target Acquired: $CustomPath" -ForegroundColor Red
+    Set-ItemProperty -Path $CustomPath -Name Attributes -Value "Normal" -ErrorAction SilentlyContinue
+    
+    try {
+        Remove-Item -Path $CustomPath -Recurse -Force -Confirm:$false -ErrorAction Stop
+        Write-Host "Target Destroyed." -ForegroundColor Green
+    } catch {
+        Write-Warning "File is locked. Scheduling destruction for NEXT REBOOT."
+        Register-DeleteOnReboot -FilePath $CustomPath
     }
 }
 
-function Remove-JunkPath {
-    param([string]$Path, [string]$Desc)
-    $ExpandedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
-    if (Test-Path $ExpandedPath) {
-        if ($PSCmdlet.ShouldProcess($ExpandedPath, "Clean $Desc")) {
-            Write-Host "Cleaning $Desc..." -ForegroundColor Cyan
-            Get-ChildItem -Path $ExpandedPath -Recurse -Force -ErrorAction SilentlyContinue | 
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
+# 2. DEEP CLEAN TOGGLE
+Write-Host "`n--- 2. DEEP SYSTEM CLEANING (CrowdStrike Alert Risk) ---" -ForegroundColor Cyan
+Write-Host "Includes: Shadow Copies, Event Logs, Disk Cleanup." -ForegroundColor Gray
+$DeepResponse = Read-Host "Enable Deep Cleaning? (y/N)"
+if ($DeepResponse -eq "y") { $DeepClean = $true } else { $DeepClean = $false }
 
-# --- START CLEANUP ---
+# --- START AUTOMATED CLEANUP ---
 
-# 1. Measure Disk Space
+# Measure Disk Space
 $DiskInfoBefore = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'"
 $FreeSpaceBefore = $DiskInfoBefore.FreeSpace
 Write-Host "`nStarting Free Space: $([math]::round($FreeSpaceBefore/1GB, 2)) GB" -ForegroundColor White
 
-# 2. Kill Processes
+# Kill Processes
 Write-Host "`n--- STEP 1: Stopping Background Processes ---" -ForegroundColor Yellow
 $KillList = @("ms-teams", "idman", "upc", "steam", "EpicGamesLauncher", "OneDrive", "Dropbox", "chrome", "msedge", "firefox", "discord", "cb_launcher", "PowerToys.Run", "upscayl")
-foreach ($proc in $KillList) { Stop-TargetProcess $proc }
+foreach ($proc in $KillList) { 
+    Stop-TargetProcess $proc
+}
 
-# 3. Windows Apps Pruning (INSTALLED - User Level)
-Write-Host "`n--- STEP 2a: Pruning INSTALLED Versions (User Level) ---" -ForegroundColor Yellow
-
+# 3. Windows Apps Pruning
+Write-Host "`n--- STEP 2: Pruning Apps (User & System) ---" -ForegroundColor Yellow
 $pruneList = @(
-    "*Microsoft.DesktopAppInstaller*",       
-    "*Microsoft.SecHealthUI*",               
-    "*NVIDIACorp.NVIDIAControlPanel*",       
-    "*RealtekSemiconductorCorp.Realtek*",    
-    "*Microsoft.MicrosoftStickyNotes*",      
-    "*Microsoft.WindowsTerminal*",           
-    "*Microsoft.WindowsNotepad*",            
-    "*Microsoft.LanguageExperiencePack*",    
-    "*Microsoft.WindowsAppRuntime*",
-    "*Microsoft.UI.Xaml*",
-    "*Microsoft.NET.Native.Framework*",  
-    "*Microsoft.NET.Native.Runtime*",
-    "*Microsoft.VCLibs*",                    
-    "*Microsoft.DirectXRuntime*",            
-    "*Microsoft.HEVCVideoExtension*",        
-    "*Microsoft.HEIFImageExtension*",        
-    "*Microsoft.VP9VideoExtensions*",        
-    "*Microsoft.WebMediaExtensions*",        
-    "*Microsoft.WebpImageExtension*",        
-    "*Microsoft.MPEG2VideoExtension*",       
-    "*Microsoft.AVCEncoderVideoExtension*"   
+    "*Microsoft.DesktopAppInstaller*", "*Microsoft.SecHealthUI*", "*NVIDIACorp.NVIDIAControlPanel*",       
+    "*RealtekSemiconductorCorp.Realtek*", "*Microsoft.MicrosoftStickyNotes*", "*Microsoft.WindowsTerminal*",           
+    "*Microsoft.WindowsNotepad*", "*Microsoft.LanguageExperiencePack*", "*Microsoft.WindowsAppRuntime*",
+    "*Microsoft.UI.Xaml*", "*Microsoft.NET.Native.Framework*", "*Microsoft.NET.Native.Runtime*",
+    "*Microsoft.VCLibs*", "*Microsoft.DirectXRuntime*", "*Microsoft.HEVCVideoExtension*",        
+    "*Microsoft.HEIFImageExtension*", "*Microsoft.VP9VideoExtensions*", "*Microsoft.WebMediaExtensions*",        
+    "*Microsoft.WebpImageExtension*", "*Microsoft.MPEG2VideoExtension*", "*Microsoft.AVCEncoderVideoExtension*"   
 )
 
+# User Installed Pruning
 foreach ($appPattern in $pruneList) {
-    # Get all packages matching the pattern (Including Frameworks)
     $packages = Get-AppxPackage -Name $appPattern -AllUsers -PackageTypeFilter Main, Framework, Resource -ErrorAction SilentlyContinue
-
     if ($packages) {
         $groupedByName = $packages | Group-Object Name
         foreach ($nameGroup in $groupedByName) {
             $groupedByArch = $nameGroup.Group | Group-Object Architecture
             foreach ($archGroup in $groupedByArch) {
-                # Sort Descending (Newest Top)
                 $sorted = $archGroup.Group | Sort-Object { [version]$_.Version } -Descending
-                
                 if ($sorted.Count -gt 1) {
                     $latest = $sorted[0]
                     $olderItems = $sorted | Select-Object -Skip 1
-                    
-                    Write-Host "Checking Installed: $($nameGroup.Name) ($($archGroup.Name))" -ForegroundColor Cyan
-                    Write-Host "  [KEEP] Latest: $($latest.Version)" -ForegroundColor Green
-
                     foreach ($oldPkg in $olderItems) {
                         if ([version]$oldPkg.Version -lt [version]$latest.Version) {
-                            if ($PSCmdlet.ShouldProcess("$($oldPkg.Name) v$($oldPkg.Version)", "Remove Old Installed")) {
-                                Write-Host "  [DEL]  Old:    $($oldPkg.Version)" -ForegroundColor Red
-                                Remove-AppxPackage -Package $oldPkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-                            }
+                            Write-Host "Removing Old: $($oldPkg.Name) v$($oldPkg.Version)" -ForegroundColor DarkGray
+                            Remove-AppxPackage -Package $oldPkg.PackageFullName -AllUsers -Confirm:$false -ErrorAction SilentlyContinue
                         }
                     }
                 }
@@ -155,33 +193,21 @@ foreach ($appPattern in $pruneList) {
     }
 }
 
-# 4. Windows Apps Pruning (PROVISIONED - System Level)
-Write-Host "`n--- STEP 2b: Pruning PROVISIONED Versions (System Level) ---" -ForegroundColor Yellow
-Write-Host "Scanning System Staging area..." -ForegroundColor Gray
-
+# Provisioned Pruning
 $allProvisioned = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-
 foreach ($pattern in $pruneList) {
     $matches = $allProvisioned | Where-Object { $_.DisplayName -like $pattern }
-
     if ($matches) {
         $grouped = $matches | Group-Object DisplayName
         foreach ($group in $grouped) {
              $sorted = $group.Group | Sort-Object { [version]$_.Version } -Descending
-
              if ($sorted.Count -gt 1) {
                  $latest = $sorted[0]
                  $olderItems = $sorted | Select-Object -Skip 1
-
-                 Write-Host "Checking Provisioned: $($group.Name)" -ForegroundColor Cyan
-                 Write-Host "  [KEEP] Latest: $($latest.Version)" -ForegroundColor Green
-                 
                  foreach ($oldPkg in $olderItems) {
                      if ([version]$oldPkg.Version -lt [version]$latest.Version) {
-                         if ($PSCmdlet.ShouldProcess("$($oldPkg.DisplayName) v$($oldPkg.Version)", "Remove Old Provisioned")) {
-                             Write-Host "  [DEL]  Old:    $($oldPkg.Version)" -ForegroundColor Red
-                             Remove-AppxProvisionedPackage -Online -PackageName $oldPkg.PackageName -ErrorAction SilentlyContinue
-                         }
+                         Write-Host "Removing Provisioned: $($oldPkg.DisplayName) v$($oldPkg.Version)" -ForegroundColor DarkGray
+                         Remove-AppxProvisionedPackage -Online -PackageName $oldPkg.PackageName -ErrorAction SilentlyContinue
                      }
                  }
              }
@@ -189,260 +215,146 @@ foreach ($pattern in $pruneList) {
     }
 }
 
-# 5. Bloatware Removal
+# 4. Bloatware Removal
 Write-Host "`n--- STEP 3: Removing Bloatware ---" -ForegroundColor Yellow
 $bloatApps = @(
-    "*Clipchamp.Clipchamp*",                 
-    "*Microsoft.MixedReality.Portal*",       
-    "*Microsoft.XboxGamingOverlay*",         
-    "*Microsoft.MicrosoftOfficeHub*",        
-    "*Microsoft.WinDbg*",                    
-    "*Microsoft.GetHelp*", 
-    "*Microsoft.People*",
-    "*Microsoft.GetStarted*",
-    "*Microsoft.YourPhone*",
-    "*Microsoft.BingNews*",             
-    "*Microsoft.Todos*",                
-    "*Microsoft.Wallet*",               
-    "*Microsoft.PowerAutomateDesktop*", 
-    "*Microsoft.Windows.DevHome*"       
+    "*Clipchamp.Clipchamp*", "*Microsoft.MixedReality.Portal*", "*Microsoft.XboxGamingOverlay*",         
+    "*Microsoft.MicrosoftOfficeHub*", "*Microsoft.WinDbg*", "*Microsoft.GetHelp*", "*Microsoft.People*",
+    "*Microsoft.GetStarted*", "*Microsoft.YourPhone*", "*Microsoft.BingNews*", "*Microsoft.Todos*",                
+    "*Microsoft.Wallet*", "*Microsoft.PowerAutomateDesktop*", "*Microsoft.Windows.DevHome*"       
 )
-
 foreach ($app in $bloatApps) {
-    if ($PSCmdlet.ShouldProcess($app, "Remove Bloatware")) {
-        Write-Host "Removing $app..." -ForegroundColor Cyan
-        Get-AppxPackage $app -AllUsers | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-        Get-AppxProvisionedPackage -Online | Where-Object {$_.PackageName -like $app} | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-    }
+    Get-AppxPackage $app -AllUsers | Remove-AppxPackage -AllUsers -Confirm:$false -ErrorAction SilentlyContinue
+    Get-AppxProvisionedPackage -Online | Where-Object {$_.PackageName -like $app} | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
 }
 
-# 6. App Orphans & Delivery Optimization
-Write-Host "`n--- STEP 4: Cleaning App Orphans ---" -ForegroundColor Yellow
-if ($PSCmdlet.ShouldProcess("DeliveryOptimization", "Clean")) {
-    Get-DeliveryOptimizationStatus | Remove-DeliveryOptimizationStatus -ErrorAction SilentlyContinue
-}
-if ($PSCmdlet.ShouldProcess("AppxDeploymentClient", "Cleanup Orphan Packages")) {
-    Start-Process -FilePath "rundll32.exe" -ArgumentList "AppxDeploymentClient.dll,AppxCleanupOrphanPackages" -Wait
-}
+# 5. Orphans & Delivery Optimization
+Write-Host "`n--- STEP 4: System Optimization ---" -ForegroundColor Yellow
+Get-DeliveryOptimizationStatus | Remove-DeliveryOptimizationStatus -Confirm:$false -ErrorAction SilentlyContinue
+Start-Process -FilePath "rundll32.exe" -ArgumentList "AppxDeploymentClient.dll,AppxCleanupOrphanPackages" -Wait
 
-# 7. File Cleanup
+# 6. File Cleanup (Junk & Temp)
 Write-Host "`n--- STEP 5: Removing Junk Files ---" -ForegroundColor Yellow
-
-# System Temp & Prefetch
 Remove-JunkPath "$env:SYSTEMROOT\Temp\*" "System Temp"
 Remove-JunkPath "$env:TEMP\*" "User Temp"
 Remove-JunkPath "$env:LOCALAPPDATA\Temp\*" "Local Temp"
 Remove-JunkPath "$env:SYSTEMROOT\Prefetch\*" "Prefetch"
-
-# Memory Dumps & Watchdog
-Remove-JunkPath "$env:SYSTEMROOT\LiveKernelReports\*" "Live Kernel Reports (Watchdog)" 
-Remove-JunkPath "$env:SYSTEMROOT\Minidump\*" "Blue Screen Minidumps"
-Remove-JunkPath "$env:SYSTEMROOT\MEMORY.DMP" "Full Memory Dump"
-Remove-JunkPath "$env:LOCALAPPDATA\CrashDumps\*" "Application Crash Dumps"
+Remove-JunkPath "$env:SYSTEMROOT\LiveKernelReports\*" "Live Kernel Reports" 
+Remove-JunkPath "$env:SYSTEMROOT\Minidump\*" "Minidumps"
+Remove-JunkPath "$env:SYSTEMROOT\MEMORY.DMP" "Memory Dump"
+Remove-JunkPath "$env:LOCALAPPDATA\CrashDumps\*" "Crash Dumps"
 Remove-JunkPath "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\*" "WER Archives"
 Remove-JunkPath "C:\ProgramData\Microsoft\Windows\WER\ReportQueue\*" "WER Queue"
 
-# Browsers (Standard Caches)
+# 7. Browser & Edge Aggressive
 Remove-JunkPath "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache\*" "Chrome Cache"
 Remove-JunkPath "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache\Cache_Data\*" "Edge Cache"
 Remove-JunkPath "$env:LOCALAPPDATA\Microsoft\Windows\WebCache\*" "Windows WebCache"
-
-# Aggressive Edge Cleanup
 $EdgeBase = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default"
 Remove-JunkPath "$EdgeBase\Service Worker\CacheStorage\*" "Edge Service Workers"
 Remove-JunkPath "$EdgeBase\Service Worker\ScriptCache\*" "Edge Service ScriptCache"
 Remove-JunkPath "$EdgeBase\IndexedDB\*" "Edge IndexedDB"
 Remove-JunkPath "$EdgeBase\Code Cache\*" "Edge Code Cache"
 
-$RecentPath = "$env:APPDATA\Microsoft\Windows\Recent"
-if (Test-Path $RecentPath) {
-    if ($PSCmdlet.ShouldProcess($RecentPath, "Clean Recent Shortcuts")) {
-        Write-Host "Cleaning Recent Shortcuts (Protecting Pinned Items)..." -ForegroundColor Cyan
-        Get-ChildItem -Path $RecentPath -File -Force -ErrorAction SilentlyContinue | 
-            Remove-Item -Force -ErrorAction SilentlyContinue
+# 8. Installer Folders
+Write-Host "--- Cleaning Installers ---" -ForegroundColor Cyan
+Remove-JunkPath "C:\Autodesk" "Autodesk Install Root"
+Remove-JunkPath "C:\adobeTemp" "Adobe Temp Root"
+Remove-JunkPath "C:\`$WinREAgent" "WinRE Agent"
+
+# TARGETED: Known User File (Explicit Removal)
+$StubbornFile = "C:\Windows\Installer\5ee8fe6.msi"
+if (Test-Path $StubbornFile) {
+    Write-Host "Deleting persistent target: 5ee8fe6.msi" -ForegroundColor Red
+    Set-ItemProperty -Path $StubbornFile -Name Attributes -Value "Normal" -ErrorAction SilentlyContinue
+    try {
+        Remove-Item -Path $StubbornFile -Force -Confirm:$false -ErrorAction Stop
+        Write-Host "Target Deleted." -ForegroundColor Green
+    } catch {
+        Write-Warning "File locked. Queueing for reboot."
+        Register-DeleteOnReboot -FilePath $StubbornFile
     }
 }
 
-# Special Folders Removal (Root)
-Write-Host "--- Checking Installer Folders ---" -ForegroundColor Cyan
-$FoldersToRemove = @("C:\Autodesk", "C:\adobeTemp", "C:\`$WinREAgent")
+# --- SMART SCANNER: RHINO/MCNEEL DETECTION (SYSTEM ONLY) ---
+Write-Host "`n--- STEP 6: Smart Scanning for Rhino Installers ---" -ForegroundColor Yellow
 
-foreach ($folder in $FoldersToRemove) {
-    if (Test-Path $folder) {
-        if ($PSCmdlet.ShouldProcess($folder, "Remove Installer Folder")) {
-            Write-Host "Removing $folder..." -ForegroundColor Red
-            Remove-Item -Path $folder -Recurse -Force -ErrorAction SilentlyContinue
+$InstallerTarget = "C:\Windows\Installer"
+if (Test-Path $InstallerTarget) {
+    Write-Host "Deep Scanning C:\Windows\Installer..." -ForegroundColor Gray
+    $files = Get-ChildItem -Path $InstallerTarget -Recurse -File -Force -ErrorAction SilentlyContinue
+    foreach ($file in $files) {
+        $prodName = Get-MsiProductName -filePath $file.FullName
+        
+        if ($prodName -match "Rhino" -and $prodName -notmatch "Rhino.Inside" -or $prodName -match "McNeel") {
+            Write-Host "Deleting: $($file.Name) - $prodName" -ForegroundColor Red
+            Set-ItemProperty -Path $file.FullName -Name Attributes -Value "Normal" -ErrorAction SilentlyContinue
+            try {
+                Remove-Item -Path $file.FullName -Force -Confirm:$false -ErrorAction Stop
+            } catch {
+                Write-Warning "Locked. Queueing for reboot."
+                Register-DeleteOnReboot -FilePath $file.FullName
+            }
         }
     }
 }
 
-# --- CUSTOM USER DATA ANALYSIS CLEANUP ---
-Write-Host "--- Cleaning User-Specific App Junk ---" -ForegroundColor Cyan
-
-# IDM (Internet Download Manager)
+# 9. App Data Cleanup
 Remove-JunkPath "$env:APPDATA\IDM\DwnlData\*" "IDM Download List"
-
-# Program Files (x86) Cleanup
-Remove-JunkPath "C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\cache\*" "Ubisoft Game Cache"
+Remove-JunkPath "C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\cache\*" "Ubisoft Cache"
 Remove-JunkPath "C:\Program Files (x86)\Microsoft\EdgeUpdate\Download\*" "Edge Update Installers"
-Remove-JunkPath "C:\Program Files (x86)\Steam\logs\*" "Steam Logs (ProgFiles)"
+Remove-JunkPath "C:\Program Files (x86)\Steam\logs\*" "Steam Logs"
 Remove-JunkPath "C:\Program Files (x86)\Common Files\Adobe\Installers\*.log" "Adobe Installer Logs"
-
-# ProgramData Cleanup (VS Packages & USO Logs)
-Remove-JunkPath "C:\ProgramData\Microsoft\VisualStudio\Packages\*" "Visual Studio Installer Packages"
-Remove-JunkPath "C:\ProgramData\USOShared\Logs\*" "Update Session Orchestrator Logs"
-
-# Upscayl, PowerToys, UniGetUI
-Remove-JunkPath "$env:LOCALAPPDATA\upscayl-updater\*" "Upscayl Update Cache"
-Remove-JunkPath "$env:LOCALAPPDATA\Microsoft\PowerToys\Updates\*" "PowerToys Update Cache"
+Remove-JunkPath "C:\ProgramData\Microsoft\VisualStudio\Packages\*" "VS Installer Packages"
+Remove-JunkPath "C:\ProgramData\USOShared\Logs\*" "USO Logs"
+Remove-JunkPath "$env:LOCALAPPDATA\upscayl-updater\*" "Upscayl Cache"
+Remove-JunkPath "$env:LOCALAPPDATA\Microsoft\PowerToys\Updates\*" "PowerToys Updates"
 Remove-JunkPath "$env:LOCALAPPDATA\UniGetUI\CachedMedia\*" "UniGetUI Cache"
-
-# Cosmos & McNeel
 Remove-JunkPath "$env:LOCALAPPDATA\Chaos\Cosmos\Updates\*" "Chaos Cosmos Updates"
 Remove-JunkPath "$env:LOCALAPPDATA\McNeel\McNeelUpdate\DownloadCache\*" "Rhino User Update Cache"
 Remove-JunkPath "C:\ProgramData\McNeel\McNeelUpdate\DownloadCache\*" "Rhino System Update Cache"
-
-# Maxon / Redshift / Cinebench (R23+) / Assets
 Remove-JunkPath "$env:APPDATA\Maxon\*\Redshift\Cache\*" "Maxon Redshift Cache"
 Remove-JunkPath "$env:APPDATA\Maxon\*\Redshift\Cache\Textures\*" "Maxon Redshift Textures"
 Remove-JunkPath "$env:APPDATA\Maxon\Cinebench*\cache\*" "Cinebench R23/2024 Cache"
 Remove-JunkPath "$env:APPDATA\Maxon\*\assets\*" "Maxon Assets Cache"
-
-# Adobe InDesign
 Remove-JunkPath "$env:LOCALAPPDATA\Adobe\InDesign\*\*\Caches\*" "InDesign Caches"
-
-# Gameloft (Asphalt 9)
 Remove-JunkPath "$env:LOCALAPPDATA\Gameloft\*\Cache\*" "Gameloft Cache"
-
-# Bluebeam
 Remove-JunkPath "$env:LOCALAPPDATA\Bluebeam\Revu\*\Logs\*" "Bluebeam Logs"
-
-# NuGet (Dev Packages)
 Remove-JunkPath "$env:USERPROFILE\.nuget\packages\*" "NuGet Packages"
-
-# Windows Widgets & Web Experience
-Remove-JunkPath "$env:LOCALAPPDATA\Packages\MicrosoftWindows.Client.CBS_*\LocalState\EBWebView\Default\Code Cache\*" "Windows Client CBS Cache"
-Remove-JunkPath "$env:LOCALAPPDATA\Packages\MicrosoftWindows.Client.WebExperience_*\LocalState\EBWebView\Default\Cache\*" "Windows WebExperience Cache"
-
-# Discord
 Remove-JunkPath "$env:APPDATA\discord\Cache\*" "Discord Cache"
 Remove-JunkPath "$env:APPDATA\discord\Code Cache\*" "Discord Code Cache"
 Remove-JunkPath "$env:APPDATA\discord\GPUCache\*" "Discord GPUCache"
-
-# App Caches (Existing)
 Remove-JunkPath "$env:LOCALAPPDATA\Autodesk\Revit\PacCache\*" "Revit PacCache"
-
-# REVIT 2018-2030 SUPPORT
 2018..2030 | ForEach-Object {
     Remove-JunkPath "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit $_\CollaborationCache\*" "Revit $_ Collab"
     Remove-JunkPath "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit $_\Journals\*" "Revit $_ Journals"
 }
-
 Remove-JunkPath "$env:HOMEPATH\ACCDOCS\*" "ACCDocs"
 Remove-JunkPath "$env:LOCALAPPDATA\Chaos Group\Vantage\cache\*" "Chaos Vantage"
-Remove-JunkPath "C:\ProgramData\McNeel\McNeelUpdate\DownloadCache\*" "Rhino Update Cache"
 Remove-JunkPath "$env:APPDATA\Adobe\Common\Media Cache Files\*" "Adobe Media Cache"
 Remove-JunkPath "$env:LOCALAPPDATA\Adobe\Lightroom\Caches\*" "Lightroom Cache"
 Remove-JunkPath "C:\ProgramData\LGHUB\cache\*" "Logitech GHub"
 Remove-JunkPath "$env:APPDATA\Zoom\logs\*" "Zoom Logs"
 Remove-JunkPath "$env:LOCALAPPDATA\NVIDIA\DXCache\*" "Nvidia DX Cache"
 Remove-JunkPath "$env:LOCALAPPDATA\Steam\htmlcache\*" "Steam Web Cache"
-Remove-JunkPath "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\webcache_*" "Epic Games WebCache"
 Remove-JunkPath "C:\Program Files (x86)\InstallShield Installation Information\*" "InstallShield Leftovers"
 
-# 8. Old Rhino Installers (Subject Check)
-Write-Host "`n--- STEP 6: Scanning for old Rhino Installers ---" -ForegroundColor Yellow
-# Define the target folder
-$targetFolder = "C:\Windows\Installer"
-
-# Function to get the Subject metadata property
-function Get-FileSubject {
-    param ([string]$filePath)
-
-    try {
-        $shell = New-Object -ComObject Shell.Application
-        $folder = $shell.Namespace((Split-Path $filePath))
-        $item = $folder.ParseName((Split-Path $filePath -Leaf))
-        
-        for ($i = 0; $i -lt 266; $i++) {
-            $name = $folder.GetDetailsOf($folder.Items, $i)
-            if ($name -eq "Subject") {
-                $subject = $folder.GetDetailsOf($item, $i)
-                return $subject
-            }
-        }
-    } catch {
-        Write-Error "Error reading properties for: $filePath"
-    }
-    return $null
-}
-
-# Get all files recursively
-$files = Get-ChildItem -Path $targetFolder -Recurse -File -ErrorAction SilentlyContinue
-
-foreach ($file in $files) {
-    $subject = Get-FileSubject -filePath $file.FullName
-    if ($subject -and $subject -match "Rhino") {
-        try {
-            Write-Host "Deleting: $($file.FullName)" -ForegroundColor Yellow
-            Remove-Item -Path $file.FullName -Force
-        } catch {
-            Write-Warning "Failed to delete: $($file.FullName) - $_"
-        }
-    }
-}
-
-# 9. Deep System Cleaning (CONDITIONAL)
-Write-Host "`n--- STEP 7: Deep System Cleaning ---" -ForegroundColor Yellow
-
+# 10. Deep Cleaning (CONDITIONAL)
 if ($DeepClean) {
+    Write-Host "`n--- STEP 8: Deep System Cleaning (Enabled) ---" -ForegroundColor Red
     if ($PSCmdlet.ShouldProcess("Shadow Copies", "Delete (User Requested)")) {
-        Write-Host "Deleting VSS Shadow Copies (Silent)..." -ForegroundColor Red
         Start-Process -FilePath "cmd.exe" -ArgumentList "/c vssadmin delete shadows /all /quiet" -Wait -WindowStyle Hidden
     }
-
     if ($PSCmdlet.ShouldProcess("CleanMgr", "Run Driver Cleanup")) {
-        $CleanMgrKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"
-        $StateFlags = @("Device Driver Packages", "Temporary Files", "Update Cleanup", "Windows Defender")
-        foreach ($flag in $StateFlags) {
-            if (Test-Path "$CleanMgrKey\$flag") {
-                Set-ItemProperty -Path "$CleanMgrKey\$flag" -Name StateFlags1221 -Type DWORD -Value 2
-            }
-        }
         Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/sagerun:1221" -Wait -WindowStyle Hidden
     }
-} else {
-    Write-Host "Skipping Shadow Copy and Disk Cleanup (Safe Mode)." -ForegroundColor Green
-}
-
-if ($PSCmdlet.ShouldProcess("WindowsUpdate", "Stop Service & Clean")) {
-    Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
-    Remove-JunkPath "C:\Windows\SoftwareDistribution\Download\*" "Windows Update Downloads"
-    Start-Service -Name wuauserv -ErrorAction SilentlyContinue
-}
-
-if ($PSCmdlet.ShouldProcess("DISM", "Component Store Cleanup")) {
-    Write-Host "Running DISM Component Cleanup (Background)..." -ForegroundColor Cyan
-    Start-Process -FilePath "dism.exe" -ArgumentList "/online /Cleanup-Image /StartComponentCleanup /Quiet /NoRestart" -Wait -WindowStyle Hidden
-}
-
-# 10. Event Viewer Cleaner (CONDITIONAL)
-Write-Host "`n--- STEP 8: Clearing Event Viewer Logs ---" -ForegroundColor Yellow
-if ($DeepClean) {
     if ($PSCmdlet.ShouldProcess("All Event Logs", "Clear via wevtutil")) {
-        Write-Host "Fetching log list..." -ForegroundColor Gray
         $logs = wevtutil.exe el
-        $count = 0
-        foreach ($log in $logs) {
-            $count++
-            Write-Progress -Activity "Clearing Event Logs" -Status "$log" -PercentComplete (($count / $logs.Count) * 100)
-            wevtutil.exe cl "$log" 2>$null
-        }
-        Write-Progress -Activity "Clearing Event Logs" -Completed
-        Write-Host "All Event Logs have been cleared." -ForegroundColor Green
+        foreach ($log in $logs) { wevtutil.exe cl "$log" 2>$null }
+        Write-Host "Event Logs Cleared." -ForegroundColor Green
     }
 } else {
-    Write-Host "Skipping Event Log Clearing (Safe Mode)." -ForegroundColor Green
+    Write-Host "`n--- STEP 8: Deep Cleaning Skipped (Safe Mode) ---" -ForegroundColor Green
 }
 
 # --- SUMMARY ---
