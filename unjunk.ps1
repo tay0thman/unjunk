@@ -1,20 +1,25 @@
 <#
 .SYNOPSIS
-    Master System Maintenance Script (v37 - Interactive UX)
+    Master System Maintenance Script (v38 - Full Parity)
 .DESCRIPTION
-    v37 UX overhaul:
-    1. DRY-RUN PREVIEW: Scans all targets, shows a size summary table,
-       and asks for confirmation BEFORE deleting anything.
-    2. PROGRESS BARS: Write-Progress with live bytes-recovered counter during
-       deletion. Replaces the scrolling text wall.
-    3. DEEP CLEAN TOGGLE: Single y/N prompt for risky operations (shadow
-       copies, event logs, cleanmgr) that may trigger CrowdStrike Falcon.
-       Steps 1-6 always run.
-    4. AUTO-SAVE LOG: Full report is saved as a timestamped .log file on the
-       Desktop after completion.
-    
-    Inherits all v36 fixes (wildcard resolution, accurate size tracking,
-    framework-safe pruning, COM cleanup, bottom-up directory removal).
+    v38 merges all cleanup categories from the original unjunk.ps1 into the
+    v37 framework. Full feature list:
+
+    FROM v37:  Dry-run preview, progress bars, deep-clean toggle (CrowdStrike
+    safe default), auto-save log, framework-safe Appx pruning, WindowsApps
+    orphan scanner, DISM component cleanup, accurate size reporting.
+
+    NEW IN v38:
+    - 50+ additional junk targets from unjunk.ps1 (V-Ray, Teams, Google Earth,
+      DriveFS, VSCode, Elgato, Epic, WhatsApp, pip, qBittorrent, WDF, Maps,
+      Remote Desktop, driver install roots, etc.)
+    - Step 7: Windows Update cleanup (stops wuauserv, clears SoftwareDistribution)
+    - Step 8: Windows Explorer & Privacy (registry MRU, recent items, jump lists,
+      shim cache, AppCompat flags — kills & restarts explorer.exe)
+    - Rhino installer scan: now removes Rhino + Rhino language packs but
+      PRESERVES Rhino.Inside installations.
+    - Expanded process kill list (all processes from unjunk.ps1)
+    - Windows Defender scan history purge (ScanPurgeItemsAfterDelay = 1)
 
 .PARAMETER Force
     Skips confirmation prompts — runs all steps including deep clean.
@@ -29,7 +34,7 @@ param(
 
 # --- CONFIGURATION ---
 $ErrorActionPreference = "SilentlyContinue"
-$Host.UI.RawUI.WindowTitle = "Master System Maintenance v37"
+$Host.UI.RawUI.WindowTitle = "Master System Maintenance v38"
 
 # --- GLOBAL REPORTING STATE ---
 $global:CleanupReport     = [System.Collections.Generic.List[PSCustomObject]]::new()
@@ -42,9 +47,6 @@ $global:TotalRebootQueued = 0
 $global:ScriptStopwatch   = [System.Diagnostics.Stopwatch]::StartNew()
 $global:StepTimings       = [System.Collections.Generic.List[PSCustomObject]]::new()
 $global:IsDryRun          = $DryRun.IsPresent
-
-# Preview-mode scan results (populated during dry-run scan, used as delete manifest)
-$global:PreviewResults    = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 # --- ADMIN CHECK ---
 $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
@@ -165,9 +167,26 @@ function Remove-ScannedFiles {
     param(
         [string]$Desc,
         [System.Collections.Generic.List[System.IO.FileInfo]]$Files,
-        [string]$Path   # original path for directory cleanup
+        [string]$Path
     )
-    if ($Files.Count -eq 0) { return }
+    if ($Files.Count -eq 0) {
+        # No files, but still attempt to remove empty directory trees
+        $resolvedPaths = @()
+        try {
+            $expandedPath = [System.Environment]::ExpandEnvironmentVariables($Path)
+            if ($expandedPath -match '[\*\?]') {
+                $resolvedPaths = @(Resolve-Path -Path $expandedPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path)
+            } elseif (Test-Path -LiteralPath $expandedPath) {
+                $resolvedPaths = @($expandedPath)
+            }
+        } catch { }
+        foreach ($resolved in $resolvedPaths) {
+            if (Test-Path -LiteralPath $resolved -PathType Container) {
+                try { Remove-Item -LiteralPath $resolved -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue } catch { }
+            }
+        }
+        return
+    }
 
     $entryBytesDeleted = 0; $entryBytesFailed = 0
     $entryFilesDeleted = 0; $entryFilesFailed = 0; $entryRebootQueued = 0
@@ -183,8 +202,7 @@ function Remove-ScannedFiles {
 
         Write-Progress -Activity "Deleting: $Desc" `
                        -Status "$i / $($Files.Count) files  |  $(Format-Size $global:TotalBytesDeleted) recovered total" `
-                       -PercentComplete $pct `
-                       -Id 1
+                       -PercentComplete $pct -Id 1
 
         try {
             Remove-Item -LiteralPath $file.FullName -Force -Confirm:$false -ErrorAction Stop
@@ -237,7 +255,7 @@ function Remove-ScannedFiles {
 }
 
 # =====================================================================
-#  JUNK PATH DEFINITIONS (data-driven: description + path pairs)
+#  JUNK PATH DEFINITIONS (data-driven)
 # =====================================================================
 
 # Build Revit year-based paths dynamically
@@ -247,69 +265,194 @@ $RevitPaths = @()
     $RevitPaths += @{ Desc = "Revit $_ Journals";  Path = "$env:LOCALAPPDATA\Autodesk\Revit\Autodesk Revit $_\Journals\*" }
 }
 
+# Build Rhino autosave paths dynamically
+$RhinoPaths = @()
+6..10 | ForEach-Object {
+    $RhinoPaths += @{ Desc = "Rhino $_.0 AutoSave"; Path = "$env:LOCALAPPDATA\McNeel\Rhinoceros\$_.0\AutoSave\*" }
+}
+
 $JunkTargets = @(
-    # --- System Temps & Crash Data ---
-    @{ Desc = "System Temp";         Path = "$env:SYSTEMROOT\Temp\*" }
-    @{ Desc = "User Temp";           Path = "$env:TEMP\*" }
-    @{ Desc = "Local Temp";          Path = "$env:LOCALAPPDATA\Temp\*" }
-    @{ Desc = "Prefetch";            Path = "$env:SYSTEMROOT\Prefetch\*" }
-    @{ Desc = "Live Kernel Reports"; Path = "$env:SYSTEMROOT\LiveKernelReports\*" }
-    @{ Desc = "Minidumps";           Path = "$env:SYSTEMROOT\Minidump\*" }
-    @{ Desc = "Memory Dump";         Path = "$env:SYSTEMROOT\MEMORY.DMP" }
-    @{ Desc = "Crash Dumps";         Path = "$env:LOCALAPPDATA\CrashDumps\*" }
-    @{ Desc = "WER Archives";        Path = "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\*" }
-    @{ Desc = "WER Queue";           Path = "C:\ProgramData\Microsoft\Windows\WER\ReportQueue\*" }
+    # ── System Temps & Crash Data ──
+    @{ Desc = "System Temp";              Path = "$env:SYSTEMROOT\Temp\*" }
+    @{ Desc = "User Temp";                Path = "$env:TEMP\*" }
+    @{ Desc = "Local Temp";               Path = "$env:LOCALAPPDATA\Temp\*" }
+    @{ Desc = "Roaming Temp";             Path = "$env:APPDATA\Temp\*" }
+    @{ Desc = "LocalLow Temp";            Path = "$env:USERPROFILE\AppData\LocalLow\Temp\*" }
+    @{ Desc = "Prefetch";                 Path = "$env:SYSTEMROOT\Prefetch\*" }
+    @{ Desc = "Live Kernel Reports";      Path = "$env:SYSTEMROOT\LiveKernelReports\*" }
+    @{ Desc = "Minidumps";                Path = "$env:SYSTEMROOT\Minidump\*" }
+    @{ Desc = "Memory Dump";              Path = "$env:SYSTEMROOT\MEMORY.DMP" }
+    @{ Desc = "Crash Dumps";              Path = "$env:LOCALAPPDATA\CrashDumps\*" }
+    @{ Desc = "WER Archives";             Path = "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\*" }
+    @{ Desc = "WER Queue";                Path = "C:\ProgramData\Microsoft\Windows\WER\ReportQueue\*" }
+    @{ Desc = "CHKDSK Fragments";         Path = "$env:SystemDrive\File*.chk" }
+    @{ Desc = "MATS Troubleshooter";      Path = "C:\MATS" }
+    @{ Desc = "SRU Monitor";              Path = "C:\Windows\System32\sru\*" }
+    @{ Desc = "DO Service Logs";          Path = "C:\WINDOWS\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Logs\*" }
 
-    # --- Browsers ---
-    @{ Desc = "Chrome Cache";        Path = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache\*" }
-    @{ Desc = "Edge Cache";          Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache\Cache_Data\*" }
-    @{ Desc = "Windows WebCache";    Path = "$env:LOCALAPPDATA\Microsoft\Windows\WebCache\*" }
-    @{ Desc = "Edge Service Workers"; Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Service Worker\CacheStorage\*" }
-    @{ Desc = "Edge ScriptCache";    Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Service Worker\ScriptCache\*" }
-    @{ Desc = "Edge IndexedDB";      Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\IndexedDB\*" }
-    @{ Desc = "Edge Code Cache";     Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Code Cache\*" }
+    # ── Autodesk / Revit ──
+    @{ Desc = "Revit PacCache";           Path = "$env:LOCALAPPDATA\Autodesk\Revit\PacCache\*" }
+    @{ Desc = "Autodesk Install Root";    Path = "C:\Autodesk" }
+    @{ Desc = "Autodesk ADPSDK JSON";     Path = "$env:APPDATA\Autodesk\ADPSDK\JSON" }
+    @{ Desc = "Revit InterProcess";       Path = "C:\ProgramData\RevitInterProcess\*" }
+    @{ Desc = "ACCDocs";                  Path = "$env:HOMEPATH\ACCDOCS\*" }
 
-    # --- Installers ---
-    @{ Desc = "Autodesk Install Root"; Path = "C:\Autodesk" }
-    @{ Desc = "Adobe Temp Root";     Path = "C:\adobeTemp" }
-    @{ Desc = "WinRE Agent";         Path = "C:\`$WinREAgent" }
+    # ── Adobe ──
+    @{ Desc = "Adobe Temp Root";          Path = "C:\adobeTemp" }
+    @{ Desc = "Adobe CC Libraries";       Path = "$env:APPDATA\Adobe\Creative Cloud Libraries\*" }
+    @{ Desc = "Adobe Dunamis";            Path = "$env:APPDATA\com.adobe.dunamis\*" }
+    @{ Desc = "Illustrator ACPL Logs";    Path = "$env:APPDATA\Adobe\Logs\Adobe Illustrator\*\Adobe Illustrator\ACPLLogs\*" }
+    @{ Desc = "Lightroom Cache";          Path = "$env:LOCALAPPDATA\Adobe\Lightroom\Caches\*" }
+    @{ Desc = "InDesign Caches";          Path = "$env:LOCALAPPDATA\Adobe\InDesign\*\*\Caches\*" }
+    @{ Desc = "Adobe Media Cache";        Path = "$env:APPDATA\Adobe\Common\Media Cache Files\*" }
+    @{ Desc = "Adobe Installer Logs";     Path = "C:\Program Files (x86)\Common Files\Adobe\Installers\*.log" }
 
-    # --- App Data ---
-    @{ Desc = "IDM Download Data";   Path = "$env:APPDATA\IDM\DwnlData\*" }
-    @{ Desc = "Ubisoft Cache";       Path = "C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\cache\*" }
-    @{ Desc = "Edge Update Installers"; Path = "C:\Program Files (x86)\Microsoft\EdgeUpdate\Download\*" }
-    @{ Desc = "Steam Logs";          Path = "C:\Program Files (x86)\Steam\logs\*" }
-    @{ Desc = "Adobe Installer Logs"; Path = "C:\Program Files (x86)\Common Files\Adobe\Installers\*.log" }
-    @{ Desc = "VS Installer Packages"; Path = "C:\ProgramData\Microsoft\VisualStudio\Packages\*" }
-    @{ Desc = "USO Logs";            Path = "C:\ProgramData\USOShared\Logs\*" }
-    @{ Desc = "Upscayl Cache";       Path = "$env:LOCALAPPDATA\upscayl-updater\*" }
-    @{ Desc = "PowerToys Updates";   Path = "$env:LOCALAPPDATA\Microsoft\PowerToys\Updates\*" }
-    @{ Desc = "UniGetUI Cache";      Path = "$env:LOCALAPPDATA\UniGetUI\CachedMedia\*" }
-    @{ Desc = "Chaos Cosmos Updates"; Path = "$env:LOCALAPPDATA\Chaos\Cosmos\Updates\*" }
-    @{ Desc = "Chaos Vantage Cache"; Path = "$env:LOCALAPPDATA\Chaos Group\Vantage\cache\*" }
-    @{ Desc = "Rhino User Update Cache"; Path = "$env:LOCALAPPDATA\McNeel\McNeelUpdate\DownloadCache\*" }
+    # ── Chaos Group / V-Ray ──
+    @{ Desc = "Chaos Vantage Cache";      Path = "$env:LOCALAPPDATA\Chaos Group\Vantage\cache\*" }
+    @{ Desc = "Chaos Cosmos Updates";     Path = "$env:LOCALAPPDATA\Chaos\Cosmos\Updates\*" }
+    @{ Desc = "V-Ray Rhino Logs";         Path = "$env:APPDATA\Chaos Group\V-Ray for Rhinoceros\vrayneui\*.log" }
+
+    # ── McNeel / Rhino ──
     @{ Desc = "Rhino System Update Cache"; Path = "C:\ProgramData\McNeel\McNeelUpdate\DownloadCache\*" }
-    @{ Desc = "Maxon Redshift Cache"; Path = "$env:APPDATA\Maxon\*\Redshift\Cache\*" }
-    @{ Desc = "Maxon Redshift Textures"; Path = "$env:APPDATA\Maxon\*\Redshift\Cache\Textures\*" }
-    @{ Desc = "Cinebench Cache";     Path = "$env:APPDATA\Maxon\Cinebench*\cache\*" }
-    @{ Desc = "Maxon Assets Cache";  Path = "$env:APPDATA\Maxon\*\assets\*" }
-    @{ Desc = "InDesign Caches";     Path = "$env:LOCALAPPDATA\Adobe\InDesign\*\*\Caches\*" }
-    @{ Desc = "Adobe Media Cache";   Path = "$env:APPDATA\Adobe\Common\Media Cache Files\*" }
-    @{ Desc = "Lightroom Cache";     Path = "$env:LOCALAPPDATA\Adobe\Lightroom\Caches\*" }
-    @{ Desc = "Gameloft Cache";      Path = "$env:LOCALAPPDATA\Gameloft\*\Cache\*" }
-    @{ Desc = "Bluebeam Logs";       Path = "$env:LOCALAPPDATA\Bluebeam\Revu\*\Logs\*" }
-    @{ Desc = "NuGet Packages";      Path = "$env:USERPROFILE\.nuget\packages\*" }
-    @{ Desc = "Discord Cache";       Path = "$env:APPDATA\discord\Cache\*" }
-    @{ Desc = "Discord Code Cache";  Path = "$env:APPDATA\discord\Code Cache\*" }
-    @{ Desc = "Discord GPUCache";    Path = "$env:APPDATA\discord\GPUCache\*" }
-    @{ Desc = "Revit PacCache";      Path = "$env:LOCALAPPDATA\Autodesk\Revit\PacCache\*" }
-    @{ Desc = "ACCDocs";             Path = "$env:HOMEPATH\ACCDOCS\*" }
-    @{ Desc = "Logitech GHub Cache"; Path = "C:\ProgramData\LGHUB\cache\*" }
-    @{ Desc = "Zoom Logs";           Path = "$env:APPDATA\Zoom\logs\*" }
-    @{ Desc = "NVIDIA DX Cache";     Path = "$env:LOCALAPPDATA\NVIDIA\DXCache\*" }
-    @{ Desc = "Steam Web Cache";     Path = "$env:LOCALAPPDATA\Steam\htmlcache\*" }
-    @{ Desc = "InstallShield Leftovers"; Path = "C:\Program Files (x86)\InstallShield Installation Information\*" }
-) + $RevitPaths
+    @{ Desc = "Rhino User Update Cache";  Path = "$env:LOCALAPPDATA\McNeel\McNeelUpdate\DownloadCache\*" }
+
+    # ── Bluebeam ──
+    @{ Desc = "Bluebeam Sessions";        Path = "$env:LOCALAPPDATA\Revu\data\Sessions\studio.bluebeam.com\*" }
+    @{ Desc = "Bluebeam WebCache";        Path = "$env:LOCALAPPDATA\Bluebeam\Revu\*\WebCache" }
+    @{ Desc = "Bluebeam Recovery";        Path = "$env:LOCALAPPDATA\Bluebeam\Revu\*\Recovery\*" }
+    @{ Desc = "Bluebeam Logs";            Path = "$env:LOCALAPPDATA\Bluebeam\Revu\*\Logs\*" }
+
+    # ── Honeybee / Ladybug ──
+    @{ Desc = "Honeybee Simulations";     Path = "$env:USERPROFILE\simulation\*" }
+
+    # ── Microsoft Teams (New Store App) ──
+    @{ Desc = "Teams WebStorage";         Path = "$env:LOCALAPPDATA\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\EBWebView\WV2Profile_tfw\WebStorage\*" }
+    @{ Desc = "Teams Cache";              Path = "$env:LOCALAPPDATA\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\EBWebView\WV2Profile_tfw\Cache\*" }
+    @{ Desc = "Teams SW CacheStorage";    Path = "$env:LOCALAPPDATA\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\EBWebView\WV2Profile_tfw\Service Worker\CacheStorage\*" }
+    @{ Desc = "Teams SW ScriptCache";     Path = "$env:LOCALAPPDATA\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\EBWebView\WV2Profile_tfw\Service Worker\ScriptCache\*" }
+    @{ Desc = "Teams Logs";               Path = "$env:LOCALAPPDATA\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\Logs\*" }
+    # Classic Teams (legacy desktop app)
+    @{ Desc = "Teams Classic SW Cache";   Path = "$env:APPDATA\Microsoft\Teams\Service Worker\CacheStorage\*" }
+    @{ Desc = "Teams Classic Cache";      Path = "$env:APPDATA\Microsoft\Teams\Cache\*" }
+
+    # ── Google ──
+    @{ Desc = "Google Earth Cache";       Path = "$env:USERPROFILE\AppData\LocalLow\Google\GoogleEarth\Cache\*" }
+    @{ Desc = "Google DriveFS Photos";    Path = "$env:LOCALAPPDATA\Google\DriveFS\*\photos_cache_temp" }
+    @{ Desc = "Google DriveFS Logs";      Path = "$env:LOCALAPPDATA\Google\DriveFS\logs\*" }
+    @{ Desc = "Google Updater CRX Cache"; Path = "C:\Program Files (x86)\Google\GoogleUpdater\crx_cache\*" }
+    @{ Desc = "Google Update Downloads";  Path = "C:\Program Files (x86)\Google\Update\Download\*" }
+
+    # ── Browsers: Chrome ──
+    @{ Desc = "Chrome Default Cache";     Path = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache\*" }
+    @{ Desc = "Chrome Profile 1 Cache";   Path = "$env:LOCALAPPDATA\Google\Chrome\User Data\Profile 1\Cache\Cache_Data\*" }
+    @{ Desc = "Chrome Profile 1 Code";    Path = "$env:LOCALAPPDATA\Google\Chrome\User Data\Profile 1\Code Cache\*" }
+    @{ Desc = "Chrome Profile 2 Code";    Path = "$env:LOCALAPPDATA\Google\Chrome\User Data\Profile 2\Code Cache\*" }
+
+    # ── Browsers: Edge ──
+    @{ Desc = "Edge Cache";               Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache\Cache_Data\*" }
+    @{ Desc = "Edge Code Cache JS";       Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Code Cache\js\*" }
+    @{ Desc = "Edge Code Cache WASM";     Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Code Cache\wasm\*" }
+    @{ Desc = "Edge Service Workers";     Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Service Worker\CacheStorage\*" }
+    @{ Desc = "Edge ScriptCache";         Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Service Worker\ScriptCache\*" }
+    @{ Desc = "Edge IndexedDB";           Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\IndexedDB\*" }
+    @{ Desc = "Edge BrowserMetrics";      Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\BrowserMetrics\*" }
+    @{ Desc = "Edge BrowserMetrics PMA";  Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\BrowserMetrics-spare.pma" }
+    @{ Desc = "Edge Profile 1 Cache";     Path = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Profile 1\Cache\Cache_Data\*" }
+    @{ Desc = "Edge Update Installers";   Path = "C:\Program Files (x86)\Microsoft\EdgeUpdate\Download\*" }
+
+    # ── Browsers: Misc ──
+    @{ Desc = "Windows WebCache";         Path = "$env:LOCALAPPDATA\Microsoft\Windows\WebCache\*" }
+    @{ Desc = "Temporary Internet Files"; Path = "$env:LOCALAPPDATA\Microsoft\Windows\Temporary Internet Files\*" }
+    @{ Desc = "pip Cache";                Path = "$env:LOCALAPPDATA\pip\*" }
+
+    # ── VSCode ──
+    @{ Desc = "VSCode Cache";             Path = "$env:APPDATA\Code\Cache\*" }
+    @{ Desc = "VSCode CachedData";        Path = "$env:APPDATA\Code\CachedData\*" }
+
+    # ── Communication / Remote ──
+    @{ Desc = "Zoom Logs";                Path = "$env:APPDATA\Zoom\logs\*" }
+    @{ Desc = "Zoom WebView Cache";       Path = "$env:APPDATA\Zoom\data\WebviewCacheX64\*\EBWebView\*" }
+    @{ Desc = "TeamViewer Cache";         Path = "$env:LOCALAPPDATA\TeamViewer\*" }
+    @{ Desc = "Remote Desktop Cache";     Path = "$env:LOCALAPPDATA\Microsoft\Terminal Server Client\Cache\*" }
+    @{ Desc = "WhatsApp SW Cache";        Path = "$env:LOCALAPPDATA\Packages\5319275A.WhatsAppDesktop_*\LocalCache\*\WhatsApp\Service Worker\CacheStorage" }
+
+    # ── IDM ──
+    @{ Desc = "IDM Download Data";        Path = "$env:APPDATA\IDM\DwnlData\*" }
+
+    # ── NVIDIA ──
+    @{ Desc = "NVIDIA DX Cache";          Path = "$env:LOCALAPPDATA\NVIDIA\DXCache\*" }
+    @{ Desc = "NVIDIA GL Cache";          Path = "$env:LOCALAPPDATA\NVIDIA\GLCache\*" }
+    @{ Desc = "NVIDIA PerDriver DXCache"; Path = "$env:USERPROFILE\AppData\LocalLow\NVIDIA\PerDriverVersion\DXCache\*" }
+    @{ Desc = "NVIDIA Compute Cache";     Path = "$env:APPDATA\NVIDIA\ComputeCache\*" }
+
+    # ── Maxon / Cinebench ──
+    @{ Desc = "Maxon Redshift Cache";     Path = "$env:APPDATA\Maxon\*\Redshift\Cache\*" }
+    @{ Desc = "Maxon Redshift Textures";  Path = "$env:APPDATA\Maxon\*\Redshift\Cache\Textures\*" }
+    @{ Desc = "Cinebench Cache";          Path = "$env:APPDATA\Maxon\Cinebench*\cache\*" }
+    @{ Desc = "Maxon Assets Cache";       Path = "$env:APPDATA\Maxon\*\assets\*" }
+
+    # ── Logitech ──
+    @{ Desc = "Logitech GHub Cache";      Path = "C:\ProgramData\LGHUB\cache\*" }
+    @{ Desc = "Logitech GHub Depots";     Path = "C:\ProgramData\LGHUB\depots\*" }
+
+    # ── Elgato ──
+    @{ Desc = "Elgato CameraHub Logs";    Path = "$env:APPDATA\Elgato\CameraHub\logs\*" }
+    @{ Desc = "Elgato CameraHub SW";      Path = "$env:APPDATA\Elgato\CameraHub\SW\*" }
+    @{ Desc = "Elgato CameraHub Tmp";     Path = "$env:APPDATA\Elgato\CameraHub\Tmp\*" }
+
+    # ── Discord ──
+    @{ Desc = "Discord Cache";            Path = "$env:APPDATA\discord\Cache\*" }
+    @{ Desc = "Discord Code Cache";       Path = "$env:APPDATA\discord\Code Cache\*" }
+    @{ Desc = "Discord GPUCache";         Path = "$env:APPDATA\discord\GPUCache\*" }
+
+    # ── Game Launchers ──
+    @{ Desc = "Steam Logs";               Path = "C:\Program Files (x86)\Steam\logs\*" }
+    @{ Desc = "Steam Web Cache";          Path = "$env:LOCALAPPDATA\Steam\htmlcache\*" }
+    @{ Desc = "Ubisoft Cache";            Path = "C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\cache\*" }
+    @{ Desc = "Epic WebCache";            Path = "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\webcache_*\*" }
+    @{ Desc = "Epic Crashes";             Path = "$env:LOCALAPPDATA\EpicGamesLauncher\Saved\Crashes\*" }
+    @{ Desc = "Datasmith Crashes";        Path = "$env:LOCALAPPDATA\UnrealDatasmithExporter\Saved\Crashes\*" }
+
+    # ── Media / Torrent ──
+    @{ Desc = "Eibolsoft Cache";          Path = "$env:LOCALAPPDATA\Eibolsoft\*" }
+    @{ Desc = "qBittorrent Cache";        Path = "$env:LOCALAPPDATA\qBittorrent\*" }
+    @{ Desc = "Gameloft Cache";           Path = "$env:LOCALAPPDATA\Gameloft\*\Cache\*" }
+
+    # ── System Caches ──
+    @{ Desc = "WDF User Data";            Path = "$env:LOCALAPPDATA\Microsoft\Windows\WDF\*" }
+    @{ Desc = "WDF System Data";          Path = "C:\ProgramData\Microsoft\WDF\*" }
+    @{ Desc = "Microsoft Maps Data";      Path = "C:\ProgramData\Microsoft\MapData\*" }
+    @{ Desc = "Windows Notifications";    Path = "$env:LOCALAPPDATA\Microsoft\Windows\Notifications\*" }
+    @{ Desc = "Action Center Cache";      Path = "$env:LOCALAPPDATA\Microsoft\Windows\ActionCenterCache\*" }
+    @{ Desc = "Windows Explorer Cache";   Path = "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\*" }
+    @{ Desc = "Windows Caches";           Path = "$env:LOCALAPPDATA\Microsoft\Windows\Caches\*" }
+    @{ Desc = "Elevated Diagnostics";     Path = "$env:LOCALAPPDATA\ElevatedDiagnostics\*" }
+    @{ Desc = "Defender Scan History";    Path = "C:\ProgramData\Microsoft\Windows Defender\Scans\History\Service" }
+
+    # ── Windows Logs ──
+    @{ Desc = "NetSetup Logs";            Path = "C:\Windows\Logs\NetSetup\*" }
+    @{ Desc = "SIH Logs";                 Path = "C:\Windows\Logs\SIH\*" }
+    @{ Desc = "Windows Update Logs";      Path = "C:\Windows\Logs\WindowsUpdate\*" }
+    @{ Desc = "USO Logs";                 Path = "C:\ProgramData\USOShared\Logs\*" }
+
+    # ── Installers & Install Leftovers ──
+    @{ Desc = "WinRE Agent";              Path = "C:\`$WinREAgent" }
+    @{ Desc = "InstallShield Leftovers";  Path = "C:\Program Files (x86)\InstallShield Installation Information\*" }
+    @{ Desc = "VS Installer Packages";    Path = "C:\ProgramData\Microsoft\VisualStudio\Packages\*" }
+    @{ Desc = "Downloaded Installations"; Path = "$env:LOCALAPPDATA\Downloaded Installations" }
+    @{ Desc = "NuGet Packages";           Path = "$env:USERPROFILE\.nuget\packages\*" }
+
+    # ── Driver Install Extraction Roots ──
+    @{ Desc = "AMD Driver Install";       Path = "$env:SystemDrive\AMD" }
+    @{ Desc = "NVIDIA Driver Install";    Path = "$env:SystemDrive\NVIDIA" }
+    @{ Desc = "Intel Driver Install";     Path = "$env:SystemDrive\INTEL" }
+
+    # ── Desktop App Caches ──
+    @{ Desc = "Upscayl Cache";            Path = "$env:LOCALAPPDATA\upscayl-updater\*" }
+    @{ Desc = "PowerToys Updates";        Path = "$env:LOCALAPPDATA\Microsoft\PowerToys\Updates\*" }
+    @{ Desc = "UniGetUI Cache";           Path = "$env:LOCALAPPDATA\UniGetUI\CachedMedia\*" }
+
+) + $RevitPaths + $RhinoPaths
 
 # =====================================================================
 #  INTERACTIVE MENU
@@ -324,7 +467,7 @@ Write-Host @"
   | |  | |/ ____ \____) |  | |  | |____| | \ \ 
   |_|  |_/_/    \_\_____/  |_|  |______|_|  \_\
 
-  Master Maintenance v37
+  Master Maintenance v38 — By Tay Othman
 "@ -ForegroundColor Green
 
 if ($DryRun) {
@@ -364,8 +507,8 @@ if ($Force) {
     $DeepClean = ($deepResponse -eq "y")
 }
 
-$stepsLabel = "Steps 1-6 (standard)"
-if ($DeepClean) { $stepsLabel += " + Step 7 (deep clean)" }
+$stepsLabel = "Steps 1-8 (standard)"
+if ($DeepClean) { $stepsLabel += " + Step 9 (deep clean)" }
 
 # =====================================================================
 #  PHASE 1: DRY-RUN SCAN (preview sizes before any deletion)
@@ -390,13 +533,21 @@ foreach ($target in $JunkTargets) {
     if ($fileCount -gt 0) {
         $fileBytes = ($files | Measure-Object -Property Length -Sum).Sum
     }
-    if ($fileCount -gt 0) {
+    # Include in preview if files found OR if path exists as a directory (for empty dir cleanup)
+    $pathExists = $false
+    if ($fileCount -eq 0) {
+        try {
+            $exp = [System.Environment]::ExpandEnvironmentVariables($target.Path) -replace '[\*\?].*$', ''
+            if ($exp -and (Test-Path -LiteralPath $exp -PathType Container)) { $pathExists = $true }
+        } catch { }
+    }
+    if ($fileCount -gt 0 -or $pathExists) {
         $previewTable.Add([PSCustomObject]@{
             Desc      = $target.Desc
             Path      = $target.Path
             FileCount = $fileCount
             Bytes     = $fileBytes
-            Files     = $files   # carry forward for deletion phase
+            Files     = $files
         })
         $previewTotalBytes += $fileBytes
         $previewTotalFiles += $fileCount
@@ -411,7 +562,7 @@ if ($HasCustomTarget) {
         Path      = $CustomPath
         FileCount = 1
         Bytes     = $customSize
-        Files     = $null  # handled separately
+        Files     = $null
     })
     $previewTotalBytes += $customSize
     $previewTotalFiles++
@@ -437,9 +588,8 @@ if ($previewTable.Count -gt 0) {
     Write-Host "  No junk files found to clean." -ForegroundColor DarkGray
 }
 
-# Show what will run
-$queuedSteps = "Kill Processes → Prune Apps → Remove Bloatware → System Optimization → Junk Removal → Rhino Scan"
-if ($DeepClean) { $queuedSteps += " → Deep Cleaning ⚠" }
+$queuedSteps = "1:Kill Procs → 2:Prune Apps → 3:Bloatware → 4:System Opt → 5:Junk → 6:Rhino → 7:WU Cleanup → 8:Explorer/Privacy"
+if ($DeepClean) { $queuedSteps += " → 9:Deep Clean ⚠" }
 Write-Host "`n  Steps: $queuedSteps" -ForegroundColor Gray
 
 # --- DRY RUN EXIT ---
@@ -489,7 +639,7 @@ if ($HasCustomTarget) {
 }
 
 # ------------------------------------------------------------------
-# STEP 1: Kill Processes
+# STEP 1: Kill Processes (expanded from unjunk.ps1)
 # ------------------------------------------------------------------
 Write-StepHeader "Stopping Background Processes" 1
 $step = Start-StepTimer "Kill Processes"
@@ -522,7 +672,8 @@ $pruneListApps = @(
     "*Microsoft.HEVCVideoExtension*",      "*Microsoft.HEIFImageExtension*",
     "*Microsoft.VP9VideoExtensions*",      "*Microsoft.WebMediaExtensions*",
     "*Microsoft.WebpImageExtension*",      "*Microsoft.MPEG2VideoExtension*",
-    "*Microsoft.AVCEncoderVideoExtension*"
+    "*Microsoft.AVCEncoderVideoExtension*",
+    "*Microsoft.WindowsStore*",            "*Microsoft.StorePurchaseApp*"
 )
 $pruneListFrameworks = @(
     "*Microsoft.WindowsAppRuntime*",       "*Microsoft.UI.Xaml*",
@@ -564,14 +715,14 @@ $allPrunePatterns = $pruneListApps + $pruneListFrameworks
 foreach ($pattern in $allPrunePatterns) {
     $isFramework = $pattern -in $pruneListFrameworks
     $keepCount = if ($isFramework) { 2 } else { 1 }
-    $matches = $allProvisioned | Where-Object { $_.DisplayName -like $pattern }
-    if (-not $matches) { continue }
-    $matchesWithArch = $matches | Select-Object *, @{
+    $matchedPackages = $allProvisioned | Where-Object { $_.DisplayName -like $pattern }
+    if (-not $matchedPackages) { continue }
+    $matchedPackages = $matchedPackages | Select-Object *, @{
         N = 'Architecture'; E = {
             if ($_.PackageName -match '_(?<arch>x64|x86|arm64|arm|neutral)_') { $Matches['arch'] } else { 'unknown' }
         }
     }
-    $matchesWithArch | Group-Object DisplayName | ForEach-Object {
+    $matchedPackages | Group-Object DisplayName | ForEach-Object {
         $_.Group | Group-Object Architecture | ForEach-Object {
             $sorted = @($_.Group | Sort-Object { [version]$_.Version } -Descending)
             if ($sorted.Count -le $keepCount) { return }
@@ -625,13 +776,15 @@ $step = Start-StepTimer "System Optimization"
 Get-DeliveryOptimizationStatus | Remove-DeliveryOptimizationStatus -Confirm:$false -ErrorAction SilentlyContinue
 Write-Host "    Delivery Optimization cache cleared." -ForegroundColor Gray
 
-# 4b. Built-in orphan cleanup (limited but fast)
+# 4b. Built-in orphan cleanup
 Start-Process -FilePath "rundll32.exe" -ArgumentList "AppxDeploymentClient.dll,AppxCleanupOrphanPackages" -Wait
 Write-Host "    Built-in Appx orphan cleanup done." -ForegroundColor Gray
 
-# 4c. DISM Component Cleanup (removes superseded component versions from WinSxS)
-#     This is the single highest-impact system size reducer. Safe — only removes
-#     components that have been fully replaced by newer versions.
+# 4c. Windows Defender — set scan purge to 1 day
+Set-MpPreference -ScanPurgeItemsAfterDelay 1 -ErrorAction SilentlyContinue
+Write-Host "    Defender scan purge set to 1 day." -ForegroundColor Gray
+
+# 4d. DISM Component Cleanup
 Write-Host "    Running DISM component cleanup (may take 1-3 min)..." -ForegroundColor Yellow
 $dismProc = Start-Process -FilePath "dism.exe" `
     -ArgumentList "/Online /Cleanup-Image /StartComponentCleanup" `
@@ -645,90 +798,47 @@ if ($dismProc.HasExited -and $dismProc.ExitCode -eq 0) {
     Write-Host "    DISM returned exit code $($dismProc.ExitCode). Check $env:TEMP\dism_cleanup.log" -ForegroundColor Yellow
 }
 
-# 4d. WindowsApps Orphan Scanner
-#     Cross-references folder contents against registered packages.
-#     Folders with no matching installation record are orphans.
+# 4e. WindowsApps Orphan Scanner
 Write-Host "    Scanning WindowsApps for orphaned packages..." -ForegroundColor Yellow
-
 $windowsAppsPath = "$env:ProgramFiles\WindowsApps"
 $orphanBytesTotal = 0
 $orphanFolders = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 try {
-    # Build lookup sets of all legitimately installed package folder names
-    $installedSet = [System.Collections.Generic.HashSet[string]]::new(
-        [StringComparer]::OrdinalIgnoreCase
-    )
-    Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | ForEach-Object {
-        $null = $installedSet.Add($_.PackageFullName)
-    }
-    # Provisioned packages use a slightly different naming — add those too
-    Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | ForEach-Object {
-        $null = $installedSet.Add($_.PackageName)
-    }
+    $installedSet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | ForEach-Object { $null = $installedSet.Add($_.PackageFullName) }
+    Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | ForEach-Object { $null = $installedSet.Add($_.PackageName) }
 
-    # Enumerate actual folders in WindowsApps
-    # This requires admin; folder ACL allows SYSTEM + TrustedInstaller by default.
-    # We read via Get-ChildItem which works with admin rights on most builds.
     $appFolders = Get-ChildItem -LiteralPath $windowsAppsPath -Directory -ErrorAction Stop
-
     foreach ($folder in $appFolders) {
-        # Skip known system folders
         if ($folder.Name -match '^(MutableBackup|MovedPackages|Deleted|\.staging)') { continue }
-        # Skip Microsoft runtime/framework infrastructure folders
         if ($folder.Name -match '^Microsoft\.(NET|VCLibs|UI\.Xaml|Services\.Store)') { continue }
-
         if (-not $installedSet.Contains($folder.Name)) {
-            # Not registered — potential orphan. Measure its size.
             $folderSize = 0
             try {
                 $folderSize = (Get-ChildItem -LiteralPath $folder.FullName -Recurse -Force -File -ErrorAction SilentlyContinue |
                                Measure-Object -Property Length -Sum).Sum
             } catch { }
-
-            # Only flag folders > 1 MB to avoid noise from tiny metadata remnants
             if ($folderSize -gt 1MB) {
-                $orphanFolders.Add([PSCustomObject]@{
-                    Name = $folder.Name
-                    Path = $folder.FullName
-                    Bytes = $folderSize
-                })
+                $orphanFolders.Add([PSCustomObject]@{ Name = $folder.Name; Path = $folder.FullName; Bytes = $folderSize })
                 $orphanBytesTotal += $folderSize
             }
         }
     }
 } catch {
-    Write-Host "    Could not enumerate WindowsApps (access denied or not found)." -ForegroundColor DarkGray
+    Write-Host "    Could not enumerate WindowsApps (access denied)." -ForegroundColor DarkGray
 }
 
 if ($orphanFolders.Count -gt 0) {
-    Write-Host ""
     Write-Host "    Found $($orphanFolders.Count) orphaned package(s) totaling $(Format-Size $orphanBytesTotal):" -ForegroundColor Yellow
-    Write-Host "    $('─' * 60)" -ForegroundColor DarkGray
-
-    foreach ($orphan in ($orphanFolders | Sort-Object Bytes -Descending)) {
-        # Truncate long package names for display
-        $displayName = $orphan.Name
-        if ($displayName.Length -gt 55) { $displayName = $displayName.Substring(0, 52) + "..." }
-        Write-Host ("    {0,-55} {1,>10}" -f $displayName, (Format-Size $orphan.Bytes)) -ForegroundColor White
-    }
-
-    Write-Host ""
-    Write-Host "    Removing orphaned packages..." -ForegroundColor Yellow
     $orphansRemoved = 0; $orphanBytesRemoved = 0
-
     foreach ($orphan in $orphanFolders) {
         try {
-            # First try: ask the package manager to remove it properly
-            $matchPkg = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
-                        Where-Object { $_.InstallLocation -eq $orphan.Path }
+            $matchPkg = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object { $_.InstallLocation -eq $orphan.Path }
             if ($matchPkg) {
                 $matchPkg | Remove-AppxPackage -AllUsers -Confirm:$false -ErrorAction Stop
-                $orphansRemoved++; $orphanBytesRemoved += $orphan.Bytes
-                continue
+                $orphansRemoved++; $orphanBytesRemoved += $orphan.Bytes; continue
             }
-
-            # Second try: take ownership and force-remove the folder
             $null = takeown.exe /F $orphan.Path /R /D Y 2>&1
             $null = icacls.exe $orphan.Path /grant "Administrators:F" /T /C /Q 2>&1
             Remove-Item -LiteralPath $orphan.Path -Recurse -Force -Confirm:$false -ErrorAction Stop
@@ -737,13 +847,12 @@ if ($orphanFolders.Count -gt 0) {
             Write-Host "    Could not remove: $($orphan.Name)" -ForegroundColor DarkGray
         }
     }
-
     if ($orphansRemoved -gt 0) {
         Write-Host "    Removed $orphansRemoved orphan(s), freed $(Format-Size $orphanBytesRemoved)." -ForegroundColor Green
         $global:CleanupReport.Add([PSCustomObject]@{
-            Description  = "WindowsApps Orphans"
+            Description = "WindowsApps Orphans"
             FilesDeleted = $orphansRemoved; BytesDeleted = $orphanBytesRemoved
-            FilesFailed  = ($orphanFolders.Count - $orphansRemoved); BytesFailed = ($orphanBytesTotal - $orphanBytesRemoved)
+            FilesFailed = ($orphanFolders.Count - $orphansRemoved); BytesFailed = ($orphanBytesTotal - $orphanBytesRemoved)
             RebootQueued = 0
         })
         $global:TotalBytesDeleted += $orphanBytesRemoved
@@ -756,19 +865,18 @@ if ($orphanFolders.Count -gt 0) {
 Stop-StepTimer $step
 
 # ------------------------------------------------------------------
-# STEP 5: Junk File Removal (using pre-scanned results + progress bar)
+# STEP 5: Junk File Removal (pre-scanned + progress bar)
 # ------------------------------------------------------------------
 Write-StepHeader "Junk File Removal ($previewTotalFiles files, $(Format-Size $previewTotalBytes))" 5
 $step = Start-StepTimer "Junk File Removal"
 
 $groupIdx = 0
-$groupTotal = $previewTable.Count
+$groupTotal = ($previewTable | Where-Object { $_.Desc -notlike "Custom:*" }).Count
 foreach ($entry in ($previewTable | Where-Object { $_.Desc -notlike "Custom:*" })) {
     $groupIdx++
     Write-Progress -Activity "Cleaning junk ($groupIdx/$groupTotal)" `
                    -Status "$($entry.Desc)  —  $(Format-Size $global:TotalBytesDeleted) recovered" `
-                   -PercentComplete ([int]($groupIdx / $groupTotal * 100)) `
-                   -Id 0
+                   -PercentComplete ([int]($groupIdx / [Math]::Max(1, $groupTotal) * 100)) -Id 0
 
     Remove-ScannedFiles -Desc $entry.Desc -Files $entry.Files -Path $entry.Path
 }
@@ -778,8 +886,10 @@ Stop-StepTimer $step
 
 # ------------------------------------------------------------------
 # STEP 6: Rhino Installer Scanner
+#   Removes: Rhino + Rhino language packs
+#   KEEPS:   Rhino.Inside (Rhino Inside Revit, etc.)
 # ------------------------------------------------------------------
-Write-StepHeader "Rhino Installer Scan" 6
+Write-StepHeader "Rhino Installer Scan (preserves Rhino.Inside)" 6
 $step = Start-StepTimer "Rhino Scan"
 
 $targetFolder = "C:\Windows\Installer"
@@ -787,13 +897,13 @@ $shell = $null
 try {
     $shell = New-Object -ComObject Shell.Application
     $files = Get-ChildItem -Path $targetFolder -Recurse -File -ErrorAction SilentlyContinue
-    $rhinoDeleted = 0; $rhinoBytes = 0
+    $rhinoDeleted = 0; $rhinoBytes = 0; $rhinoSkipped = 0
     $fileTotal = @($files).Count; $fileIdx = 0
 
     foreach ($file in $files) {
         $fileIdx++
         if ($fileIdx % 50 -eq 0) {
-            Write-Progress -Activity "Scanning Installer folder" -Status "$fileIdx / $fileTotal" -PercentComplete ([int]($fileIdx / $fileTotal * 100)) -Id 3
+            Write-Progress -Activity "Scanning Installer folder" -Status "$fileIdx / $fileTotal" -PercentComplete ([int]($fileIdx / [Math]::Max(1, $fileTotal) * 100)) -Id 3
         }
         try {
             $folder = $shell.Namespace($file.DirectoryName)
@@ -813,7 +923,13 @@ try {
                     }
                 }
             }
+
             if ($subject -and $subject -match "Rhino") {
+                # *** KEEP Rhino.Inside installations ***
+                if ($subject -match "Rhino\.Inside") {
+                    $rhinoSkipped++
+                    continue
+                }
                 $size = $file.Length
                 Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
                 $rhinoDeleted++; $rhinoBytes += $size
@@ -834,16 +950,128 @@ try {
     } else {
         Write-Host "    No Rhino remnants found." -ForegroundColor DarkGray
     }
+    if ($rhinoSkipped -gt 0) {
+        Write-Host "    Preserved $rhinoSkipped Rhino.Inside file(s)." -ForegroundColor Green
+    }
 } finally {
     if ($shell) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null }
 }
 Stop-StepTimer $step
 
 # ------------------------------------------------------------------
-# STEP 7: Deep Cleaning
+# STEP 7: Windows Update Cleanup
+# ------------------------------------------------------------------
+Write-StepHeader "Windows Update Cleanup" 7
+$step = Start-StepTimer "WU Cleanup"
+
+# Stop Windows Update service
+Write-Host "    Stopping wuauserv..." -ForegroundColor DarkGray
+Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
+# Clear SoftwareDistribution download cache
+$wuDlPath = "C:\WINDOWS\SoftwareDistribution\Download"
+if (Test-Path -LiteralPath $wuDlPath) {
+    $wuSize = (Get-ChildItem -LiteralPath $wuDlPath -Recurse -Force -File -ErrorAction SilentlyContinue |
+               Measure-Object -Property Length -Sum).Sum
+    Remove-Item -LiteralPath $wuDlPath -Recurse -Force -ErrorAction SilentlyContinue
+    if ($wuSize -gt 0) {
+        $global:CleanupReport.Add([PSCustomObject]@{
+            Description = "WU SoftwareDistribution"
+            FilesDeleted = 1; BytesDeleted = $wuSize
+            FilesFailed = 0; BytesFailed = 0; RebootQueued = 0
+        })
+        $global:TotalBytesDeleted += $wuSize
+        $global:TotalFilesDeleted++
+        Write-Host "    Cleared SoftwareDistribution ($(Format-Size $wuSize))" -ForegroundColor Yellow
+    }
+}
+
+# Clear servicing LCU rollup
+Remove-Item "C:\Windows\servicing\LCU\*.*" -Recurse -Force -ErrorAction SilentlyContinue
+
+# Restart Windows Update service
+Start-Service -Name wuauserv -ErrorAction SilentlyContinue
+Write-Host "    wuauserv restarted." -ForegroundColor Gray
+
+# Clear IE / legacy browser tracks
+RunDll32.exe InetCpl.cpl, ClearMyTracksByProcess 1
+
+Stop-StepTimer $step
+
+# ------------------------------------------------------------------
+# STEP 8: Windows Explorer & Privacy Cleanup
+# ------------------------------------------------------------------
+Write-StepHeader "Windows Explorer & Privacy" 8
+$step = Start-StepTimer "Explorer & Privacy"
+
+# Kill explorer for clean registry/file access
+Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+# Recent Items (history only — preserves pinned Quick Access & taskbar jump lists)
+Write-Host "    Clearing recent items (preserving pins)..." -ForegroundColor DarkGray
+Get-ChildItem "$env:APPDATA\Microsoft\Windows\Recent\*" -File -Force -Exclude desktop.ini -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+# AutomaticDestinations: exclude f01b4d95cf55d32a = Quick Access pinned folders
+Get-ChildItem "$env:APPDATA\Microsoft\Windows\Recent\AutomaticDestinations\*" -File -Force `
+    -Exclude desktop.ini, "f01b4d95cf55d32a.automaticDestinations-ms" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+# CustomDestinations: SKIP entirely — these are user-pinned taskbar jump list entries
+Remove-Item "$env:APPDATA\Microsoft\Windows\Recent\*.lnk" -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\History" -Recurse -Force -ErrorAction SilentlyContinue
+
+# Registry MRU / History cleanup
+Write-Host "    Clearing registry history keys..." -ForegroundColor DarkGray
+$registryTargets = @(
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\WordWheelQuery"
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RecentDocs"
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths"
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FeatureUsage"
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\ComDlg32"
+    "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache"
+    "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\BagMRU"
+    "HKCU:\SOFTWARE\MPC-HC\MPC-HC\Recent File List"
+    "HKCU:\Software\MPC-HC\MPC-HC\MediaHistory"
+    "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Compatibility Assistant\Persisted"
+    "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Compatibility Assistant\Store"
+)
+$regCleaned = 0
+foreach ($regPath in $registryTargets) {
+    if (Test-Path -LiteralPath $regPath) {
+        Remove-Item -LiteralPath $regPath -Recurse -Force -ErrorAction SilentlyContinue
+        $regCleaned++
+    }
+}
+
+# AppCompatCache (Shim Cache) — system-level
+foreach ($cs in @("ControlSet001", "CurrentControlSet")) {
+    $shimPath = "HKLM:\SYSTEM\$cs\Control\Session Manager\AppCompatCache"
+    if (Test-Path -LiteralPath $shimPath) {
+        Remove-Item -LiteralPath $shimPath -Recurse -Force -ErrorAction SilentlyContinue
+        $regCleaned++
+    }
+}
+
+Write-Host "    Cleaned $regCleaned registry key(s)." -ForegroundColor Gray
+
+# IDM download history (registry)
+1..9 | ForEach-Object {
+    Remove-Item "HKCU:\Software\DownloadManager\$_*" -Recurse -ErrorAction SilentlyContinue
+}
+
+# Restart explorer
+Start-Process explorer.exe
+Write-Host "    Explorer restarted." -ForegroundColor Green
+
+Stop-StepTimer $step
+
+# ------------------------------------------------------------------
+# STEP 9: Deep Cleaning (gated by $DeepClean)
 # ------------------------------------------------------------------
 if ($DeepClean) {
-    Write-StepHeader "Deep System Cleaning ⚠" 7
+    Write-StepHeader "Deep System Cleaning ⚠" 9
     $step = Start-StepTimer "Deep Cleaning"
 
     if ($PSCmdlet.ShouldProcess("Shadow Copies", "Delete")) {
@@ -851,37 +1079,24 @@ if ($DeepClean) {
         Write-Host "    Shadow Copies deleted." -ForegroundColor Yellow
     }
     if ($PSCmdlet.ShouldProcess("CleanMgr", "Run Cleanup")) {
-        # Configure cleanup categories for sagerun profile 1221.
-        # Without this, /sagerun:1221 exits instantly (no profile = nothing to do).
         $volumeCachesKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"
         $cleanupCategories = @(
-            "Active Setup Temp Folders"
-            "BranchCache"
-            "D3D Shader Cache"
-            "Delivery Optimization Files"
-            "Device Driver Packages"
-            "Diagnostic Data Viewer database files"
-            "Downloaded Program Files"
-            "Internet Cache Files"
-            "Language Pack"
-            "Old ChkDsk Files"
-            "Previous Installations"
-            "Recycle Bin"
-            "RetailDemo Offline Content"
-            "Service Pack Cleanup"
-            "Setup Log Files"
-            "System error memory dump files"
-            "System error minidump files"
-            "Temporary Files"
-            "Temporary Setup Files"
-            "Thumbnail Cache"
-            "Update Cleanup"
-            "Upgrade Discarded Files"
-            "User file versions"
-            "Windows Defender"
-            "Windows Error Reporting Files"
-            "Windows ESD installation files"
-            "Windows Upgrade Log Files"
+            "Active Setup Temp Folders",          "BranchCache"
+            "D3D Shader Cache",                   "Delivery Optimization Files"
+            "Device Driver Packages",             "Diagnostic Data Viewer database files"
+            "Downloaded Program Files",           "Internet Cache Files"
+            "Language Pack",                       "Old ChkDsk Files"
+            "Previous Installations",             "Recycle Bin"
+            "RetailDemo Offline Content",         "Service Pack Cleanup"
+            "Setup Log Files",                     "System error memory dump files"
+            "System error minidump files",        "Temporary Files"
+            "Temporary Setup Files",              "Thumbnail Cache"
+            "Update Cleanup",                     "Upgrade Discarded Files"
+            "User file versions",                 "Windows Defender"
+            "Windows Error Reporting Files",      "Windows Error Reporting Archive Files"
+            "Windows Error Reporting Queue Files", "Windows Error Reporting System Archive Files"
+            "Windows Error Reporting System Queue Files"
+            "Windows ESD installation files",     "Windows Upgrade Log Files"
         )
 
         Write-Host "    Configuring Disk Cleanup profile..." -ForegroundColor DarkGray
@@ -896,29 +1111,17 @@ if ($DeepClean) {
         Write-Host "    Enabled $configuredCount cleanup categories." -ForegroundColor DarkGray
 
         Write-Host "    Running Disk Cleanup (this may take a while)..." -ForegroundColor Yellow
-        $cleanMgrProc = Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/sagerun:1221" -PassThru
-        # cleanmgr spawns a child process and the parent exits immediately.
-        # Wait for the actual cleanup window (DismHost or cleanmgr) to finish.
-        try {
-            $cleanMgrProc | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
-        } catch { }
-        # Now wait for the real worker process
-        $timeout = 600  # 10 minute max
-        $elapsed = 0
+        $cleanMgrProc = Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/sagerun:1221 /d C:" -PassThru
+        try { $cleanMgrProc | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue } catch { }
+        $timeout = 600; $elapsed = 0
         while ($elapsed -lt $timeout) {
-            Start-Sleep -Seconds 3
-            $elapsed += 3
+            Start-Sleep -Seconds 3; $elapsed += 3
             $workers = Get-Process -Name "cleanmgr", "DismHost" -ErrorAction SilentlyContinue
             if (-not $workers) { break }
-            if ($elapsed % 15 -eq 0) {
-                Write-Host "    Still cleaning... ($elapsed sec)" -ForegroundColor DarkGray
-            }
+            if ($elapsed % 15 -eq 0) { Write-Host "    Still cleaning... ($elapsed sec)" -ForegroundColor DarkGray }
         }
-        if ($elapsed -ge $timeout) {
-            Write-Host "    Disk Cleanup timed out after $timeout seconds." -ForegroundColor Yellow
-        } else {
-            Write-Host "    Disk Cleanup completed." -ForegroundColor Yellow
-        }
+        if ($elapsed -ge $timeout) { Write-Host "    Disk Cleanup timed out after $timeout seconds." -ForegroundColor Yellow }
+        else { Write-Host "    Disk Cleanup completed." -ForegroundColor Yellow }
     }
     if ($PSCmdlet.ShouldProcess("Event Logs", "Clear all")) {
         $logs = wevtutil.exe el
@@ -928,7 +1131,7 @@ if ($DeepClean) {
     }
     Stop-StepTimer $step
 } else {
-    Write-Host "`n  Step 7: Deep Cleaning skipped (CrowdStrike safe)." -ForegroundColor Green
+    Write-Host "`n  Step 9: Deep Cleaning skipped (CrowdStrike safe)." -ForegroundColor Green
 }
 
 # =====================================================================
@@ -950,7 +1153,7 @@ $AggregatedReport = $global:CleanupReport |
                   @{N='RebootQueued'; E={($_.Group | Measure-Object RebootQueued -Sum).Sum}} |
     Sort-Object BytesDeleted -Descending
 
-# --- Build report string (used for both console and log file) ---
+# --- Build report string (console + log file) ---
 $reportLines = [System.Collections.Generic.List[string]]::new()
 
 function Add-ReportLine {
@@ -996,7 +1199,6 @@ Add-ReportLine "  C: FREE AFTER:       $(Format-Size $FreeSpaceAfter)" -Color Gr
 $deltaSign = if ($Recovered -ge 0) { "+" } else { "" }
 Add-ReportLine "  NET CHANGE:          $deltaSign$(Format-Size $Recovered)" -Color $(if ($Recovered -ge 0) { "Green" } else { "Red" })
 
-# Reboot queue
 if ($global:RebootQueue.Count -gt 0) {
     Add-ReportLine ""
     Add-ReportLine "  $('─' * 68)" -Color DarkGray
@@ -1005,7 +1207,6 @@ if ($global:RebootQueue.Count -gt 0) {
     Add-ReportLine "  !! A reboot is required to complete cleanup." -Color Yellow
 }
 
-# Step timings
 Add-ReportLine ""
 Add-ReportLine "  $('─' * 68)" -Color DarkGray
 Add-ReportLine "  STEP TIMINGS:" -Color Gray
@@ -1014,7 +1215,6 @@ foreach ($t in $global:StepTimings) {
 }
 Add-ReportLine ("    {0,-30} {1,>10}" -f "TOTAL RUNTIME", (Format-Elapsed $global:ScriptStopwatch.Elapsed)) -Color White
 
-# Top 5
 if ($AggregatedReport.Count -gt 0) {
     Add-ReportLine ""
     Add-ReportLine "  $('─' * 68)" -Color DarkGray
@@ -1041,10 +1241,11 @@ $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $logPath = Join-Path $logDir "Maintenance_$timestamp.log"
 
 $logHeader = @(
-    "Master System Maintenance v37 — Log"
+    "Master System Maintenance v38 — Log"
     "Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     "User: $env:USERNAME@$env:COMPUTERNAME"
     "Steps Run: $stepsLabel"
+    "Junk Targets: $($JunkTargets.Count)"
     ""
 )
 ($logHeader + $reportLines) | Out-File -FilePath $logPath -Encoding UTF8
