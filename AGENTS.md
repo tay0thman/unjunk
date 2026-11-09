@@ -1,6 +1,6 @@
 # Unjunk contributor handoff
 
-Updated 2026-11-08. The current application is v52, a native Windows PowerShell/WPF cleanup dashboard. Read `README.md` for the full behavior and commands; this file records the development map and decisions that future changes must preserve. Update this handoff when those decisions change.
+Updated 2026-11-09. The current application is v52, a native Windows PowerShell/WPF cleanup dashboard. Read `README.md` for the full behavior and commands; this file records the development map and decisions that future changes must preserve. Update this handoff when those decisions change.
 
 ## Project map
 
@@ -20,6 +20,12 @@ Updated 2026-11-08. The current application is v52, a native Windows PowerShell/
 | `archived scripts/` | Historical reference files; not application dependencies or test inputs. See its README. |
 
 Keep `Unjunk.exe`, `Launch Unjunk.cmd`, `One-click full clean.cmd` and the runtime modules together in the project root. `windowsApps_cleanup.ps1` is a current compatibility entry point that opens the protected GUI; it is not the old app-removal implementation. The executable loads the sibling scripts, so script-only changes do not require rebuilding it.
+
+## Release delivery
+
+Compiled launchers are ignored in source control. Publish the runnable Windows ZIP as a GitHub Release asset and keep the README download link current. For v52 the asset is `Unjunk-v52-windows.zip` under tag `v52`; users extract the entire ZIP and run `Unjunk.exe`.
+
+Build the launcher with `Build.ps1` in a fresh source copy. Package the executable, current runtime scripts/modules, `Unjunk.ExplorerRecentNative.cs`, launch commands and usage instructions together. The EXE is not standalone. Exclude archived scripts, local history/settings/reports and test fixtures from the binary package. Verify an extracted ZIP, check its SHA-256 and test the launcher with an isolated harmless script before publishing; full cleanup is not a packaging test.
 
 ## Established product behavior
 

@@ -4,9 +4,15 @@ A native Windows cleanup dashboard built with PowerShell and WPF. Scan C:, inspe
 
 For future development, see [AGENTS.md](AGENTS.md) for the project map, established behavior and validation notes. Historical files are indexed in [archived scripts](archived%20scripts/README.md); the current launchers, build assets, modules and tests remain in the project root and `tests/`.
 
-## Launch
+## Download
 
-Double-click **Unjunk.exe** (already built on this PC), **Launch Unjunk.cmd**, or run:
+**[Download Unjunk v52 for Windows](https://github.com/tay0thman/unjunk/releases/download/v52/Unjunk-v52-windows.zip)**
+
+Extract the entire ZIP into a folder, then double-click **Unjunk.exe**. The package includes the executable and all required scripts; keep those files together. No build step is needed for the release download.
+
+## Launch from source
+
+GitHub source checkouts do not include the compiled executable. Double-click **Launch Unjunk.cmd**, or run:
 
 ```powershell
 .\unjunk.ps1 -Gui
