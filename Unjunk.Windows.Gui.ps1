@@ -1,6 +1,7 @@
 #requires -Version 5.1
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.Core.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.Windows.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Unjunk.Progress.psm1')
 
 function Show-UnjunkWindowsConfirmation($Owner,[object[]]$Jobs,[bool]$CloseApps=$false) {
     $dialog=New-Object Windows.Window
@@ -59,13 +60,14 @@ function Show-UnjunkWindowsWindow {
 '@
     $ui=@{Window=[Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader $markup));Scan=$null;Worker=$null;Report=$null;
         Options=@();Apps=@();CanRun=($IsAdmin -and -not $CrowdStrikeSafe);Safe=$CrowdStrikeSafe;TempAge=$TempAgeDays;Exclusions=$Exclusions;
-        Module=(Join-Path $PSScriptRoot 'Unjunk.Windows.psm1');Syncing=$false;LastSummary=''}
+        Module=(Join-Path $PSScriptRoot 'Unjunk.Windows.psm1');Syncing=$false;LastSummary='';LiveRevision=''}
     # GetNewClosure callbacks run in dynamic modules. Capture script-local helpers and
     # module commands now instead of resolving their names from a later click callback.
     $ui.ConfirmSelection=${function:Show-UnjunkWindowsConfirmation}
     $ui.BuildPlan=Get-Command Get-UnjunkWindowsPlan -CommandType Function -ErrorAction Stop
     $ui.BusyChecker=Get-Command Test-UnjunkWindowsCleanupBusy -CommandType Function -ErrorAction Stop
     $ui.WriteReport=Get-Command Save-UnjunkReport -CommandType Function -ErrorAction Stop
+    $ui.FormatProgress=Get-Command Format-UnjunkProgressText -CommandType Function -ErrorAction Stop
     if($Owner) { $ui.Window.Owner=$Owner }
     foreach($name in @('EnableButton','ModeNotice','CleanAllCheck','OptionsPanel','AllAppsButton','ClearAppsButton','AppSearch','AppsGrid','Details','Status','Progress','ClearButton','ExportButton','StopButton','ScanButton','RunButton')) { $ui[$name]=$ui.Window.FindName($name) }
     $ui.EnableButton.Visibility=if($ui.CanRun){'Collapsed'}else{'Visible'}
@@ -147,6 +149,12 @@ function Show-UnjunkWindowsWindow {
     $timer.Add_Tick({
         if(-not $ui.Worker) { & $update; return }
         $ui.Status.Text=$ui.State.Message
+        if($ui.Worker.Operation -eq 'Clean' -and $ui.State.ContainsKey('StepSnapshot')) {
+            $snapshot=$ui.State.StepSnapshot
+            if($ui.LiveRevision -ne $snapshot.Revision){$ui.Details.Text=& $ui.FormatProgress $snapshot;$ui.LiveRevision=$snapshot.Revision}
+            $ui.Progress.IsIndeterminate=$false
+            if($snapshot.Total){$ui.Progress.Value=100.0*$snapshot.FinishedCount/$snapshot.Total}
+        }
         if(-not $ui.Worker.Handle.IsCompleted) { return }
         $operation=$ui.Worker.Operation
         try {

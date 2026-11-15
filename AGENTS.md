@@ -1,6 +1,6 @@
-# Unjunk contributor handoff
+﻿# Unjunk contributor handoff
 
-Updated 2026-11-14. The current application is v54, a native Windows PowerShell/WPF cleanup dashboard. Read `README.md` for the full behavior and commands; this file records the development map and decisions that future changes must preserve. Update this handoff when those decisions change.
+Updated 2026-11-14. The current application is v55, a native Windows PowerShell/WPF cleanup dashboard. Read `README.md` for the full behavior and commands; this file records the development map and decisions that future changes must preserve. Update this handoff when those decisions change.
 
 ## Project map
 
@@ -10,6 +10,7 @@ Updated 2026-11-14. The current application is v54, a native Windows PowerShell/
 | `Unjunk.Core.psm1` | File catalog, scanning, exclusions, identity checks, cleanup and reports. |
 | `Unjunk.Windows.psm1`, `Unjunk.Windows.Gui.ps1` | Selectable Windows maintenance operations and their UI. |
 | `Unjunk.OneClick.ps1`, `Unjunk.OneClick.psm1` | Detached full-clean worker, sequencing, measurements and history persistence. |
+| `Unjunk.Progress.psm1`, `Unjunk.Progress.Gui.ps1` | Immutable live stage snapshots, atomic status-file updates and the responsive one-click checklist. |
 | `Unjunk.History.Gui.ps1` | Mouse-controlled cleanup timeline and per-drive graphs. |
 | `Unjunk.AppLeftovers.psm1` | Machine-wide leftovers of apps no longer installed. |
 | `Unjunk.Privacy.psm1`, `Unjunk.ActivityHistory.psm1` | Privacy traces, recent activity and application histories. |
@@ -23,7 +24,7 @@ Keep `Unjunk.exe`, `Launch Unjunk.cmd`, `One-click full clean.cmd` and the runti
 
 ## Release delivery
 
-Compiled launchers are ignored in source control. Publish the runnable Windows ZIP as a GitHub Release asset and keep the README download link current. For v54 the asset is `Unjunk-v54-windows.zip` under tag `v54`; users extract the entire ZIP and run `Unjunk.exe`.
+Compiled launchers are ignored in source control. Publish the runnable Windows ZIP as a GitHub Release asset and keep the README download link current. For v55 the asset is `Unjunk-v55-windows.zip` under tag `v55`; users extract the entire ZIP and run `Unjunk.exe`.
 
 Build the launcher with `Build.ps1` in a fresh source copy. Package the executable, current runtime scripts/modules, `Unjunk.ExplorerRecentNative.cs`, launch commands and usage instructions together. The EXE is not standalone. Exclude archived scripts, local history/settings/reports and test fixtures from the binary package. Verify an extracted ZIP, check its SHA-256 and test the launcher with an isolated harmless script before publishing; full cleanup is not a packaging test.
 
@@ -38,15 +39,23 @@ Build the launcher with `Build.ps1` in a fresh source copy. Package the executab
 - Preserve scanned-file boundaries, exclusions, identity checks, reparse-point protection and locked/changed-file handling. Do not replace them with recursive deletion of live application trees or raw WindowsApps/WinSxS/Installer directories.
 - Keep DISM and Disk Cleanup progress visible and sequential. Preserve maintenance locking, cancellation boundaries and exit-code reporting; do not force-terminate servicing to release a busy lock.
 
-## Windows recovery-update leftovers: v54 scope
+## Windows recovery-update leftovers: v55 scope
 
 `Unjunk.Core.psm1` catalogs only the literal system-drive `$WinREAgent` root as a Review target. Windows category `winre-agent` is separate from native Disk Cleanup and automatically included by Clean all and one-click, after temp files. Use the existing scanned-file engine, including exclusions, identities and no-link checks. Do not expand the dollar sign as a PowerShell variable, target the recovery partition or delete raw recovery/servicing trees.
 
-Require elevation and verify pending CBS/Windows Update restart markers, Windows setup state, active servicing processes, the registered ReAgent.xml recovery paths and supported `Get-WindowsImage -Mounted` inventory. Unknown/unavailable status, references into this folder or mounted images using it block cleanup. Recheck before deleting each file; never stop servicing, unmount images, alter recovery configuration or queue these files for reboot deletion. A blocked scan preserves its reason until a fresh scan; Windows results and timeline report skipped work instead of success. Empty directory shells may remain. `tests/WinREAgent.Tests.ps1` mocks Windows providers and deletes only fixture files; never use the live recovery folder as a test fixture.
+The live v54 report showed a real Windows Update restart requirement, not a missing cleanup target. Preserve that guard. Report the reason prominently as Skipped, propagate RestartRequired, and let the user restart and rescan; do not clear restart markers or bypass servicing protections to remove the folder.
+
+Require elevation and verify pending CBS/Windows Update restart markers, Windows setup state, active servicing processes, the registered ReAgent.xml recovery paths and supported `Get-WindowsImage -Mounted` inventory. Unknown/unavailable status, references into this folder or mounted images using it block cleanup. Recheck before deleting each file; never stop servicing, unmount images, alter recovery configuration or queue these files for reboot deletion. A blocked scan preserves its reason until a fresh scan; Windows results and timeline report skipped work instead of success. After deleting files, remove only scanned, unchanged, nonlinked empty directories using nonrecursive deletion, including the root. Preserve new folders and any retained/excluded contents. Directory creation identities and containment are validated before mutation. `tests/WinREAgent.Tests.ps1` mocks Windows providers and deletes only fixture files; never use the live recovery folder as a test fixture.
 
 ## Cinebench 2026: v53 scope
 
 The user selected generated caches and logs, not a full profile reset. Discover only direct `%APPDATA%\Maxon\Cinebench2026_win_x86_64_<8 hex digits>` profiles and explicit Redshift/WebView cache or diagnostic leaves. Keep preferences, results, custom data, libraries, plug-ins, repositories, description databases and WebView credentials/storage. Do not follow linked profiles or cache roots. Cache targets participate in one-click's cache stage and existing close-apps behavior using `Cinebench*`; diagnostic targets use the existing logs stage and age rules. Do not map generic `msedgewebview2`, Cinema 4D or Maxon services to this profile. `tests/Cinebench.Tests.ps1` covers discovery, data preservation, links, process gating and both cleanup routes with disposable fixtures.
+
+## Live progress: v55 behavior
+
+One-click runs in an STA runspace while a separate WPF dispatcher stays responsive. A synchronized state carries immutable `StepSnapshot` objects; publish before each stage, after each result, and after cancellation/completion. Native heartbeat updates must retain earlier results. The status file carries the same snapshot for the main dashboard, with atomic replacement; use `[NullString]::Value` for File.Replace's null backup path in Windows PowerShell 5.1.
+
+Keep completed/partial/failed/skipped rows with confirmed counts. Unknown native byte/item totals must not become measured zero. A queued stage cancelled before execution is Not run. Stop never kills servicing; closing the live window minimizes it until the worker finishes. Then the user reviews the checklist and opens the existing mouse-controlled timeline. Package both new progress files with the runtime. Progress fixtures test the actual STA/dispatcher handoff using a harmless mock worker, never the full cleaner. Empty app-leftover results must sum to zero without strict-mode errors.
 
 ## Explorer recents: preserve the v51 repair
 
@@ -81,6 +90,8 @@ Run checks relevant to the change; the README lists the remaining focused suites
 For v53, all 174 checks across the Cinebench, Core, CodexCache, CloseApps, SystemScan, OneClick and Windows suites passed. The new Cinebench suite contains 20 checks. The live Cinebench directory was previewed read-only; its contents were not used as deletion fixtures.
 
 For v54, 224 checks passed across WinREAgent, Core, Cinebench, CodexCache, CloseApps, SystemScan, OneClick, Windows and GUI callbacks. The 30 new recovery checks cover idle/busy/restart states, recovery references, mounted images, unavailable providers, per-file rechecks and preservation of links/exclusions/new/changed/locked files. The live $WinREAgent folder was inspected read-only; its contents were not deleted during development.
+
+For v55, 314 checks passed across 13 focused suites, including 35 recovery checks and 17 progress checks. Progress rendering was inspected offscreen. Live recovery files were left intact while Windows Update required a restart and servicing was active.
 
 Routine verification uses disposable fixtures, mocked providers and offscreen views. Do not run the full cleaner, clear real history/logs or remove real snapshots just to test a code change. Tests that touch files should stay within verified disposable roots.
 

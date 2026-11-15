@@ -107,6 +107,24 @@ try {
     Assert ($result.DeletedFiles -eq 3 -and $result.DeletedBytes -eq 36 -and $result.SkippedFiles -eq 2) 'Eligible backup, scratch and rollback files are deleted and accurately counted'
     Assert ((Test-Path -LiteralPath $changed) -and (Test-Path -LiteralPath $locked) -and (Test-Path -LiteralPath $excluded) -and (Test-Path -LiteralPath $new)) 'Changed, locked, excluded and newly created files are preserved'
     Assert ((Get-FileHash -LiteralPath $outsideFile).Hash -eq $outsideHash -and $result.ClosedProcesses -eq 0 -and $result.QueuedFiles -eq 0) 'Outside data, running processes and the reboot queue remain untouched'
+    Assert ($result.RemovedDirectories -gt 0 -and (Test-Path -LiteralPath $root) -and (Test-Path -LiteralPath $link)) 'Only empty scanned folders are removed; linked and retained contents keep the root intact'
+    $lock.Dispose();$lock=$null
+    if(-not ([IO.Path]::GetFullPath($link)).StartsWith([IO.Path]::GetFullPath($fixture)+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Unsafe fixture link'}
+    [IO.Directory]::Delete($link,$false);$link=$null
+    $scan=Scan
+    $directories=$scan.Targets[0].Directories
+    $scan.Targets[0].Directories+=@([pscustomobject]@{Path=$outside;CreationTicks=(Get-Item -LiteralPath $outside).CreationTimeUtc.Ticks})
+    $rejected=$false;try{$null=Invoke-UnjunkCleanup -Scan $scan -TargetIds $scan.Targets[0].Id -Confirm:$false}catch{$rejected=$true}
+    Assert ($rejected -and (Test-Path -LiteralPath $changed)) 'Out-of-root directory records are rejected before deleting any files'
+    $scan.Targets[0].Directories=$directories
+    $newDirectory=Join-Path $root 'NewAfterScan';$null=New-Item -ItemType Directory -Path $newDirectory
+    $result=Invoke-UnjunkCleanup -Scan $scan -TargetIds $scan.Targets[0].Id -Confirm:$false
+    Assert ((Test-Path -LiteralPath $newDirectory) -and (Test-Path -LiteralPath $root)) 'Directories created after scanning are preserved even when empty'
+    $scan=Scan
+    $null=Invoke-UnjunkCleanup -Scan $scan -TargetIds $scan.Targets[0].Id -WhatIf
+    Assert (Test-Path -LiteralPath $root) 'Preview never removes empty directory shells'
+    $result=Invoke-UnjunkCleanup -Scan $scan -TargetIds $scan.Targets[0].Id -Confirm:$false
+    Assert (-not (Test-Path -LiteralPath $root) -and $result.RemovedDirectories -eq 2) 'A fresh eligible cleanup removes the empty WinREAgent root itself'
     Write-Host "All $passed WinREAgent checks passed."
 } finally {
     if($null -ne $lock){$lock.Dispose()}

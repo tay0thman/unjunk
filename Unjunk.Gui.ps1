@@ -3,6 +3,7 @@ Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.Core.psm1') -Force
 . (Join-Path $PSScriptRoot 'Unjunk.Windows.Gui.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.OneClick.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Unjunk.Progress.psm1')
 $script:oneClickProcess=$null
 $script:maintenanceBusy=Test-UnjunkWindowsCleanupBusy
 $script:unjunkModule=Join-Path $PSScriptRoot 'Unjunk.Core.psm1'
@@ -179,7 +180,14 @@ $script:timer.Add_Tick({
         if(-not $script:worker){$script:StatusText.Text='One-click process finished. Open Cleanup timeline for its result.'}
     }
     if($null -ne $script:oneClickProcess -and -not $script:worker) {
-        try { $status=Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Unjunk\one-click-status.json') -Raw -ErrorAction Stop | ConvertFrom-Json; $script:StatusText.Text=[string]$status.Message } catch { }
+        try {
+            $status=Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Unjunk\one-click-status.json') -Raw -ErrorAction Stop | ConvertFrom-Json
+            $script:StatusText.Text=[string]$status.Message
+            if($null -ne $status.PSObject.Properties['Snapshot'] -and $null -ne $status.Snapshot) {
+                $script:DetailsText.Text=Format-UnjunkProgressText $status.Snapshot
+                if($status.Snapshot.Total){$script:Progress.Value=100.0*$status.Snapshot.FinishedCount/$status.Snapshot.Total}
+            }
+        } catch { }
     }
     if(-not $script:worker) { Update-UnjunkSelection; return }
     $script:Progress.Value=$script:state.Progress; $script:StatusText.Text=$script:state.Message

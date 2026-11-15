@@ -31,7 +31,9 @@ $apps=@([pscustomobject]@{Id='leftover-data:fixture';Name='Contoso.Removed';Vers
         $script:registry[(Split-Path $LiteralPath -Leaf)][$Name]=$Value
     }
     function script:Remove-ItemProperty {param($LiteralPath,$Name,$ErrorAction) $script:registry[(Split-Path $LiteralPath -Leaf)].Remove($Name)}
-    function script:Invoke-UnjunkWindowsNative {param($Executable,$Arguments)
+    $script:liveSnapshots=New-Object 'System.Collections.Generic.List[object]'
+    function script:Invoke-UnjunkWindowsNative {param($Executable,$Arguments,$State)
+        if($null -ne $State -and $State.ContainsKey('StepSnapshot')){$script:liveSnapshots.Add($State.StepSnapshot)}
         $snapshot=@{};foreach($key in $script:registry.Keys){$snapshot[$key]=$script:registry[$key].Clone()}
         $script:nativeCalls.Add([pscustomobject]@{Executable=$Executable;Arguments=@($Arguments);Registry=$snapshot})
         if($script:failNative){throw 'Simulated native failure'}
@@ -86,7 +88,7 @@ $scan.ScannedAt=[DateTime]::UtcNow.AddMinutes(-31).ToString('o');Reject {Invoke-
 $scan.UserSid='another-account';Reject {Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds 'winsxs' -Confirm:$false} 'Cross-account scans cannot be cleaned';$scan=Scan
 & $module {$script:winREBlock='Windows update is awaiting a restart.'}
 $result=Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds 'winre-agent' -Confirm:$false
-Assert ($result.Partial -eq 1 -and $result.Results[0].ItemsCleaned -eq 0 -and $result.Results[0].Output -match 'awaiting a restart') 'Recovery skips stay visible in results and timeline instead of reporting a successful cleanup'
+Assert ($result.Partial -eq 1 -and $result.RestartRequired -and $result.Results[0].ItemsCleaned -eq 0 -and $result.Results[0].Output -match 'awaiting a restart') 'Recovery skips and pending restarts stay visible instead of reporting successful cleanup'
 & $module {$script:winREBlock=''}
 $result=Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds $options.Id -AppIds $apps.Id -WhatIf
 Assert (@($result.Results | Where-Object Status -ne 'Preview').Count -eq 0) 'WhatIf returns a complete preview plan'
@@ -95,6 +97,8 @@ Assert ((& $module {$script:nativeCalls.Count+$script:removals.Count+$script:wri
 $result=Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds 'winsxs','live-kernel','memory-dumps' -Confirm:$false
 Assert ($result.Completed -eq 1 -and $result.Partial -eq 2) 'Partial file cleanup is reported separately from successful maintenance'
 Assert ($result.Results[0].Kind -eq 'Files' -and $result.Results[0].ItemsCleaned -eq 1 -and $result.Results[-1].Kind -eq 'DISM' -and $null -eq $result.Results[-1].ItemsCleaned) 'File counts and native unknown counts are recorded, with files preceding long servicing'
+$live=@(& $module {$script:liveSnapshots | Where-Object FinishedCount -eq 2})[0]
+Assert ($live.CountedItems -eq 2 -and $live.Steps[0].Status -eq 'Partial' -and $live.Steps[2].Status -eq 'Running') 'The Windows engine publishes completed file stages before waiting for foreground DISM'
 Assert ([DateTime]::Parse($result.Results[0].CompletedAt) -ge [DateTime]::Parse($result.Results[0].StartedAt)) 'Each cleanup period records real start and finish timestamps'
 $dism=@(& $module {$script:nativeCalls | Where-Object Executable -eq 'Dism.exe'})[0]
 Assert ('/StartComponentCleanup' -in $dism.Arguments -and '/NoRestart' -in $dism.Arguments -and '/ResetBase' -notin $dism.Arguments) 'WinSxS performs component cleanup without ResetBase or an automatic restart'
@@ -136,4 +140,5 @@ Assert ('/Quiet' -in $vss[0].Arguments -and '/all' -notin $vss[0].Arguments) 'Sh
 $state=@{Cancel=$true;Progress=0;Message=''};$before=& $module {$script:nativeCalls.Count}
 $result=Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds 'winsxs' -State $state -Confirm:$false
 Assert ($result.Cancelled -and $result.Results.Count -eq 0 -and (& $module {$script:nativeCalls.Count}) -eq $before) 'Stop prevents subsequent operations without terminating Windows servicing'
+Assert ($state.StepSnapshot.Steps[0].Status -eq 'Not run' -and $state.StepSnapshot.FinishedCount -eq 0) 'The live checklist does not mark cancelled native work complete'
 Write-Host "All $passed Windows maintenance checks passed."

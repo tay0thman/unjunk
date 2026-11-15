@@ -1,6 +1,7 @@
 #requires -Version 5.1
 Set-StrictMode -Version 2.0
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.Core.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Unjunk.Progress.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.AppLeftovers.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.Privacy.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.ExplorerHistory.psm1')
@@ -226,9 +227,7 @@ function Invoke-UnjunkWindowsNative {
             $elapsed=[DateTime]::UtcNow-$started
             $mode=if($foreground){'foreground window'}else{'running'}
             $State.Message=('{0} / {1} / {2:00}:{3:00}:{4:00} elapsed / process {5}. Stop waits for this operation.' -f $Executable,$mode,[Math]::Floor($elapsed.TotalHours),$elapsed.Minutes,$elapsed.Seconds,$process.Id)
-            if($State.ContainsKey('StatusPath')) {
-                try { @{Finished=$false;UpdatedAt=[DateTime]::UtcNow.ToString('o');Message=$State.Message} | ConvertTo-Json | Set-Content -LiteralPath $State.StatusPath -Encoding UTF8 -ErrorAction Stop } catch { }
-            }
+            Write-UnjunkProgressStatus $State
         }
       } while(-not $process.WaitForExit(1000))
       $process.WaitForExit()
@@ -334,6 +333,7 @@ function Invoke-UnjunkWindowsCleanup {
         foreach($job in $appJobs) { if($job.Id -notin @($current | Select-Object -ExpandProperty Id)) { throw 'A selected app changed or is no longer removable. Scan again.' } }
     }
     $results=New-Object 'System.Collections.Generic.List[object]'; $lock=$null; $held=$false
+    Update-UnjunkCleanupProgress -State $State -Jobs $jobs -Results @()
     try {
         if(-not $WhatIfPreference) {
             $lock=New-Object Threading.Mutex($false,$script:maintenanceMutexName)
@@ -345,6 +345,7 @@ function Invoke-UnjunkWindowsCleanup {
             $startedAt=[DateTime]::UtcNow.ToString('o'); $itemsCleaned=$null
             $State.Message='Running '+$job.Name+'. Stop waits for the current Windows operation to finish.'
             $State.Progress=[int](100*$results.Count/[Math]::Max(1,$jobs.Count))
+            Update-UnjunkCleanupProgress -State $State -CurrentId $job.Id
             if(-not $PSCmdlet.ShouldProcess($job.Name,$job.Detail)) {
                 $results.Add([pscustomobject]@{Id=$job.Id;Name=$job.Name;Status='Preview';Output=$job.Detail;RestartRequired=$false;FileResult=$null;ExitCode=$null}); continue
             }
@@ -358,6 +359,8 @@ function Invoke-UnjunkWindowsCleanup {
                         if($job.Id -eq 'winre-agent') {
                             $reasons=@($fileResult.Results | Where-Object Status -eq 'Skipped' | Select-Object -ExpandProperty Reason -Unique)
                             if($reasons.Count) { $native.Output+=' '+($reasons -join ' ') }
+                            if(@($reasons | Where-Object {$_ -match 'awaiting a restart'}).Count){$native.RestartRequired=$true}
+                            if($null -ne $fileResult.PSObject.Properties['RemovedDirectories']) { $native.Output+=" Removed $($fileResult.RemovedDirectories) empty folders." }
                         }
                     }
                     'DiskCleanup' { $native=Invoke-UnjunkDiskCleanup -Handlers $job.Handlers -State $State }
@@ -385,9 +388,11 @@ function Invoke-UnjunkWindowsCleanup {
             } catch {
                 $results.Add([pscustomobject]@{Id=$job.Id;Name=$job.Name;Kind=$job.Kind;StartedAt=$startedAt;CompletedAt=[DateTime]::UtcNow.ToString('o');ItemsCleaned=$itemsCleaned;Status='Failed';Output=$_.Exception.Message;RestartRequired=$false;FileResult=$fileResult;ExitCode=$null})
             }
+            Update-UnjunkCleanupProgress -State $State -Results $results.ToArray()
         }
     } finally { if($held) { $lock.ReleaseMutex() }; if($null -ne $lock) { $lock.Dispose() } }
     $State.Progress=100
+    Update-UnjunkCleanupProgress -State $State -Results $results.ToArray() -Finished
     [pscustomobject]@{CompletedAt=[DateTime]::UtcNow.ToString('o');Cancelled=[bool]$State.Cancel;Results=$results.ToArray();
         Completed=@($results | Where-Object Status -eq 'Completed').Count;Failed=@($results | Where-Object Status -eq 'Failed').Count;
         Partial=@($results | Where-Object Status -eq 'Partial').Count;RestartRequired=(@($results | Where-Object RestartRequired).Count -gt 0)}

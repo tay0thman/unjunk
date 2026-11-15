@@ -1,6 +1,7 @@
 #requires -Version 5.1
 Set-StrictMode -Version 2.0
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.Core.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Unjunk.Progress.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.Windows.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Unjunk.AppLeftovers.psm1')
 $script:oneClickMutexName='Global\Unjunk-OneClick'
@@ -73,7 +74,7 @@ function Get-UnjunkHistory {
 
 function Invoke-UnjunkOneClick {
     [CmdletBinding()]
-    param([string[]]$Exclusions=@(),[bool]$CloseApps=$true)
+    param([string[]]$Exclusions=@(),[bool]$CloseApps=$true,$ProgressState)
     if(-not (Test-UnjunkOneClickAdmin)) { throw 'One-click cleanup requires administrator access.' }
     if(Test-UnjunkWindowsCleanupBusy){throw 'Another Unjunk Windows cleanup is still running. It must finish before a new run can start.'}
     if(@(Get-Process -Name cleanmgr -ErrorAction SilentlyContinue).Count) { throw 'Windows Disk Cleanup is already running. Let that operation finish before starting the one-click cleaner.' }
@@ -90,8 +91,9 @@ function Invoke-UnjunkOneClick {
         $statusDirectory=Join-Path $env:LOCALAPPDATA 'Unjunk'
         $null=New-Item -ItemType Directory -Path $statusDirectory -Force -ErrorAction Stop
         $statusPath=Join-Path $statusDirectory 'one-click-status.json'
-        $state=@{Cancel=$false;Progress=0;Message='Scanning full cleanup targets...';StatusPath=$statusPath}
-        @{Finished=$false;UpdatedAt=$run.StartedAt;Message=$state.Message} | ConvertTo-Json | Set-Content -LiteralPath $statusPath -Encoding UTF8 -ErrorAction Stop
+        $state=if($null -ne $ProgressState){$ProgressState}else{@{Cancel=$false}}
+        $state.Progress=0;$state.Message='Scanning full cleanup targets...';$state.StatusPath=$statusPath;$state.Finished=$false
+        Update-UnjunkCleanupProgress -State $state -Jobs @() -Results @()
         try {
             # The override belongs to this invocation only. Never write settings.json or Falcon configuration.
             $scan=Invoke-UnjunkWindowsScan -CrowdStrikeSafe $false -TempAgeDays 0 -Exclusions $Exclusions -State $state
@@ -110,7 +112,11 @@ function Invoke-UnjunkOneClick {
             foreach($row in $scan.FileScan.Targets) {
                 if(@($row.Issues).Count) { $run.Warnings+=@($row.Name+': '+($row.Issues -join '; ')) }
             }
-            $report=Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds $options -AppIds $apps -DiskCleanupProfile Full -CloseApps:$CloseApps -State $state -Confirm:$false
+            if($state.Cancel){
+                $report=[pscustomobject]@{Results=@();RestartRequired=$false;Failed=0;Completed=0;Partial=0;Cancelled=$true}
+            } else {
+                $report=Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds $options -AppIds $apps -DiskCleanupProfile Full -CloseApps:$CloseApps -State $state -Confirm:$false
+            }
             $run.RestartRequired=[bool]$report.RestartRequired
             $run.Periods=@(foreach($result in $report.Results) {
                 if($null -ne $result.ItemsCleaned) { $run.CountedItems+=[long]$result.ItemsCleaned }
@@ -133,7 +139,11 @@ function Invoke-UnjunkOneClick {
         $run.CompletedAt=[DateTime]::UtcNow.ToString('o')
         $run.Disks=@(Get-UnjunkSpaceChange -Before $before -After @(Get-UnjunkDiskSpace))
         $path=Save-UnjunkHistory -Run $run
-        @{Finished=$true;UpdatedAt=$run.CompletedAt;Message=('One-click cleanup '+$run.Status.ToLowerInvariant()+'. Open Cleanup timeline for details.')} | ConvertTo-Json | Set-Content -LiteralPath $statusPath -Encoding UTF8 -ErrorAction SilentlyContinue
+        $state.Finished=$true;$state.Message='One-click cleanup '+$run.Status.ToLowerInvariant()+'. Open Cleanup timeline for details.'
+        if($state.Cancel){$state.Message='Cleanup stopped. Completed work is kept; later stages were not run.'}
+        if($run.RestartRequired){$state.Message+=' Windows reports that a restart is needed.'}
+        if($run.Error){$state.Message+=' '+$run.Error}
+        Update-UnjunkCleanupProgress -State $state -Finished
         $run | Add-Member -NotePropertyName HistoryPath -NotePropertyValue $path
         $run
     } finally { if($held){$lock.ReleaseMutex()}; $lock.Dispose() }

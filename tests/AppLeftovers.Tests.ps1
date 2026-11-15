@@ -95,6 +95,9 @@ try {
     $second=@(Get-UnjunkAppLeftovers | Where-Object Root -eq $data2)[0]
     $result=Invoke-UnjunkAppLeftoverCleanup -App $second -Confirm:$false
     Assert ($result.ItemsCleaned -eq 1 -and $result.FileResult.DeletedFiles -eq 1) 'Eligible leftover files in another profile can be cleaned machine-wide'
+    $empty=$second.PSObject.Copy();$empty.Files=@()
+    $result=Invoke-UnjunkAppLeftoverCleanup -App $empty -Confirm:$false
+    Assert ($result.ExitCode -eq 0 -and $result.ItemsCleaned -eq 0 -and $result.FileResult.DeletedBytes -eq 0) 'Already-empty app leftovers report zero work instead of a Sum-property failure'
     $result=Invoke-UnjunkAppLeftoverCleanup -App $provisioned -Confirm:$false
     Assert ($result.RemovedProvisionedPackages -eq 1 -and (& $module {$script:removed.Count}) -eq 1) 'Only the exact unused provisioned copy is removed'
     Assert ((Test-Path -LiteralPath (Join-Path $activeData 'data.bin')) -and (Test-Path -LiteralPath (Join-Path $terminalData 'data.bin')) -and (Test-Path -LiteralPath (Join-Path $chatData 'data.bin'))) 'Every protected or active app data fixture survives all cleanup cases'

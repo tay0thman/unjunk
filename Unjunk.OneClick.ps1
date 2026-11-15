@@ -19,7 +19,8 @@ try {
             if($null -ne $settings.PSObject.Properties['Exclusions']) { $exclusions=@($settings.Exclusions) }
             if($null -ne $settings.PSObject.Properties['CloseApps']) { $closeApps=[bool]$settings.CloseApps }
         }
-        $run=Invoke-UnjunkOneClick -Exclusions $exclusions -CloseApps $closeApps
+        . (Join-Path $PSScriptRoot 'Unjunk.Progress.Gui.ps1')
+        $run=Show-UnjunkOneClickProgress -Exclusions $exclusions -CloseApps $closeApps
     }
     Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase
     . (Join-Path $PSScriptRoot 'Unjunk.History.Gui.ps1')

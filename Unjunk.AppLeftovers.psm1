@@ -135,7 +135,8 @@ function Invoke-UnjunkAppLeftoverCleanup {
         $results.Add((& $core {param($file,$root,$exclusions) Remove-UnjunkCandidate -File $file -Root $root -Exclusions $exclusions -Confirm:$false} $file $root $App.Exclusions))
     }
     # Leave empty directory shells intact. Never sweep new/unscanned data with recursive deletion.
-    $files=@($results | Where-Object Status -eq 'Deleted').Count; $bytes=[long](($results | Measure-Object Bytes -Sum).Sum)
+    $files=@($results | Where-Object Status -eq 'Deleted').Count; $bytes=0L
+    foreach($result in $results) { $bytes+=[long]$result.Bytes }
     $fileResult=[pscustomobject]@{DeletedFiles=$files;DeletedBytes=$bytes;SkippedFiles=@($results | Where-Object Status -eq 'Skipped').Count;QueuedFiles=0;QueuedBytes=0L;Results=$results.ToArray()}
     [pscustomobject]@{ExitCode=0;Output="Removed $files leftover files / $(Format-UnjunkSize $bytes). Registered apps are preserved.";RestartRequired=$false;ItemsCleaned=[long]$files;FileResult=$fileResult;RemovedProvisionedPackages=0L}
 }

@@ -514,6 +514,7 @@ function Get-UnjunkTargetScan {
     param($Target, [int]$TempAgeDays, [string[]]$Exclusions, $State, [bool]$CrowdStrikeSafe=$false)
     $root = Assert-UnjunkRoot $Target.Root
     $files = New-Object 'System.Collections.Generic.List[object]'
+    $directories = New-Object 'System.Collections.Generic.List[object]'
     $issues = New-Object 'System.Collections.Generic.List[string]'
     $bytes = 0L; $links = 0; $recent = 0; $excluded = 0; $exists = $false; $maintenanceBlock=''
     $age = $Target.MinimumAgeDays
@@ -542,6 +543,7 @@ function Get-UnjunkTargetScan {
             $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $links++; continue }
             if ($item.PSIsContainer) {
+                if(Test-UnjunkWinREAgentTarget $Target) { $directories.Add([pscustomobject]@{Path=$item.FullName;CreationTicks=$item.CreationTimeUtc.Ticks}) }
                 if(-not $Target.Recurse -and $item.FullName -ne $root) { continue }
                 foreach ($child in @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop)) { $stack.Push($child.FullName) }
             } else {
@@ -556,7 +558,7 @@ function Get-UnjunkTargetScan {
     $status = if ($Target.ScanOnly) { 'Inventory only' } elseif ($policyBlocked) { 'Blocked by Safe profile' } elseif ($maintenanceBlock) { 'Skipped: '+$maintenanceBlock } elseif ($issues.Count) { 'Partial / access errors' } elseif ($links) { 'Links skipped' } elseif (-not $exists) { 'Not present' } elseif ($running.Count) { 'Close: ' + ($running -join ', ') } elseif ($files.Count) { 'Ready' } else { 'No eligible files' }
     [pscustomobject]@{ Id=$Target.Id; Name=$Target.Name; Category=$Target.Category; Root=$root; Risk=$Target.Risk;
         Recommended=($Target.Recommended -and -not $policyBlocked); CanSelect=(-not $Target.ScanOnly -and -not $maintenanceBlock); MaintenanceBlock=$maintenanceBlock; PolicyBlocked=$policyBlocked; Note=$Target.Note; Bytes=$bytes; Size=(Format-UnjunkSize $bytes); FileCount=$files.Count;
-        Files=$files.ToArray(); RunningApps=$running; Status=$status; Issues=$issues.ToArray(); SkippedLinks=$links;
+        Files=$files.ToArray(); Directories=$directories.ToArray(); RunningApps=$running; Status=$status; Issues=$issues.ToArray(); SkippedLinks=$links;
         SkippedRecent=$recent; SkippedExcluded=$excluded; MinimumAgeDays=$age; FilePattern=$Target.FilePattern; Recurse=$Target.Recurse; ScanOnly=$Target.ScanOnly; Selected=$false }
 }
 
@@ -738,6 +740,31 @@ function Remove-UnjunkEmptyAutodeskDirectories($Target,$State,[string[]]$Exclusi
     }
 }
 
+function Remove-UnjunkEmptyWinREDirectories($Row,$State,[string[]]$Exclusions=@()) {
+    if(-not (Test-UnjunkWinREAgentTarget $Row) -or $null -eq $Row.PSObject.Properties['Directories']) { return }
+    $root=Assert-UnjunkRoot $Row.Root
+    foreach($directory in @($Row.Directories | Sort-Object { $_.Path.Length } -Descending)) {
+        if($State.Cancel) { break }
+        $path=Get-UnjunkFullPath $directory.Path
+        if(-not (Test-UnjunkWithin $path $root)) { throw 'Recovery directory is outside the scanned root.' }
+        if(Test-UnjunkExcluded $path $Exclusions) { continue }
+        try {
+            if(-not (Test-Path -LiteralPath $path -ErrorAction Stop)) { continue }
+            $block=Get-UnjunkWinREAgentBlockReason
+            if($block) { throw $block }
+            $item=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if(-not $item.PSIsContainer -or $item.CreationTimeUtc.Ticks -ne $directory.CreationTicks -or -not (Test-UnjunkNoLinks $path)) { continue }
+            if(@(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop).Count) { continue }
+            # Nonrecursive deletion also refuses a file created after the empty check.
+            [IO.Directory]::Delete($path,$false)
+            [pscustomobject]@{Path=$path;Bytes=0L;QueuedBytes=0L;Status='DirectoryRemoved';Reason='Empty scanned recovery-update folder.'}
+        } catch {
+            [pscustomobject]@{Path=$path;Bytes=0L;QueuedBytes=0L;Status='Skipped';Reason=$_.Exception.Message}
+            break
+        }
+    }
+}
+
 function Invoke-UnjunkCleanup {
     [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='High')]
     param([Parameter(Mandatory)]$Scan, [Parameter(Mandatory)][string[]]$TargetIds, [switch]$QueueOnReboot, [switch]$CloseApps, $State)
@@ -759,6 +786,9 @@ function Invoke-UnjunkCleanup {
         foreach($file in $row.Files) {
             if(-not (Test-UnjunkTargetFile $file.Path $catalog[$row.Id])) { throw 'A scanned file does not match the current target filename/depth filter. Scan again.' }
         }
+        if((Test-UnjunkWinREAgentTarget $row) -and $null -ne $row.PSObject.Properties['Directories']) {
+            foreach($directory in $row.Directories) { if(-not (Test-UnjunkWithin (Get-UnjunkFullPath $directory.Path) $row.Root)) { throw 'A scanned recovery directory is outside its root.' } }
+        }
         if($QueueOnReboot -and $catalog[$row.Id].Risk -notin @('Cache','Temporary')) { throw 'Delete at reboot is limited to cache and temporary-file targets. Deselect diagnostics and installers.' }
         if($Scan.CrowdStrikeSafe -and -not (Test-UnjunkSafeTarget $catalog[$row.Id])) { throw 'Selection is blocked by CrowdStrike Safe cleaning.' }
         if($Scan.CrowdStrikeSafe -and @($row.Files | Where-Object { $_.LastWriteTicks -gt [DateTime]::UtcNow.AddDays(-7).Ticks }).Count) { throw 'Safe cleaning only permits files at least seven days old.' }
@@ -771,6 +801,7 @@ function Invoke-UnjunkCleanup {
         if ($State.Cancel) { break }
         $target=$catalog[$row.Id]
         $winREAgent=Test-UnjunkWinREAgentTarget $target
+        $winREStopped=$false
         if($winREAgent) {
             $block=if($null -ne $row.PSObject.Properties['MaintenanceBlock']){[string]$row.MaintenanceBlock}else{''}
             if(-not $block -and $row.FileCount -gt 0) { $block=Get-UnjunkWinREAgentBlockReason }
@@ -793,6 +824,7 @@ function Invoke-UnjunkCleanup {
             $processed+=$row.FileCount; continue
         }
         $action=if($QueueOnReboot){'Queue selected file paths for deletion at next restart (replacement files at these paths can also be deleted)'}else{'Permanently delete selected files'}
+        if($winREAgent) { $action='Delete scanned recovery-update files and empty scanned folders' }
         if($canClose) { $action='Close mapped apps (force-stop if needed; unsaved work can be lost), then '+$action.ToLowerInvariant() }
         if (-not $PSCmdlet.ShouldProcess("$($row.Name): $($row.FileCount) scanned files", $action)) { continue }
         if($canClose -and $row.FileCount -gt 0) {
@@ -810,6 +842,7 @@ function Invoke-UnjunkCleanup {
                 $State.Message='Checking Windows recovery-update status...'
                 $block=Get-UnjunkWinREAgentBlockReason
                 if($block) {
+                    $winREStopped=$true
                     $results.Add([pscustomobject]@{Path=$row.Root;Bytes=0L;QueuedBytes=0L;Status='Skipped';Reason=$block}); break
                 }
             }
@@ -834,6 +867,9 @@ function Invoke-UnjunkCleanup {
         }
         if($autodesk -and -not $State.Cancel){
             foreach($entry in @(Remove-UnjunkEmptyAutodeskDirectories $target $State $Scan.Exclusions)){$results.Add($entry)}
+        }
+        if($winREAgent -and -not $winREStopped -and -not $State.Cancel) {
+            foreach($entry in @(Remove-UnjunkEmptyWinREDirectories $row $State $Scan.Exclusions)) { $results.Add($entry) }
         }
     }
     $State.Progress=100

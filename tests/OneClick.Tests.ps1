@@ -101,6 +101,9 @@ try {
     }
     $future=Invoke-UnjunkOneClick -CloseApps $false
     Assert ('future-cleanup' -in (& $module {$script:cleanArgs.Options}) -and -not (& $module {$script:cleanArgs.CloseApps})) 'New categories join one-click automatically and the app-closing preference is honored'
+    $calls=& $module {$script:cleanCalls};$state=[hashtable]::Synchronized(@{Cancel=$true})
+    $stopped=Invoke-UnjunkOneClick -ProgressState $state
+    Assert ($stopped.Status -eq 'Partial' -and $stopped.CountedItems -eq 0 -and (& $module {$script:cleanCalls}) -eq $calls -and $state.Finished -and $state.Message -match 'stopped') 'Stopping during the scan starts no cleanup and completes the shared progress state'
 } finally {
     $env:LOCALAPPDATA=$previousLocal
     $full=[IO.Path]::GetFullPath($fixtureRoot); $testRoot=[IO.Path]::GetFullPath($PSScriptRoot)+'\'
