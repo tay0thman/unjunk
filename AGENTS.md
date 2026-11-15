@@ -1,6 +1,6 @@
 # Unjunk contributor handoff
 
-Updated 2026-11-14. The current application is v53, a native Windows PowerShell/WPF cleanup dashboard. Read `README.md` for the full behavior and commands; this file records the development map and decisions that future changes must preserve. Update this handoff when those decisions change.
+Updated 2026-11-14. The current application is v54, a native Windows PowerShell/WPF cleanup dashboard. Read `README.md` for the full behavior and commands; this file records the development map and decisions that future changes must preserve. Update this handoff when those decisions change.
 
 ## Project map
 
@@ -23,13 +23,13 @@ Keep `Unjunk.exe`, `Launch Unjunk.cmd`, `One-click full clean.cmd` and the runti
 
 ## Release delivery
 
-Compiled launchers are ignored in source control. Publish the runnable Windows ZIP as a GitHub Release asset and keep the README download link current. For v53 the asset is `Unjunk-v53-windows.zip` under tag `v53`; users extract the entire ZIP and run `Unjunk.exe`.
+Compiled launchers are ignored in source control. Publish the runnable Windows ZIP as a GitHub Release asset and keep the README download link current. For v54 the asset is `Unjunk-v54-windows.zip` under tag `v54`; users extract the entire ZIP and run `Unjunk.exe`.
 
 Build the launcher with `Build.ps1` in a fresh source copy. Package the executable, current runtime scripts/modules, `Unjunk.ExplorerRecentNative.cs`, launch commands and usage instructions together. The EXE is not standalone. Exclude archived scripts, local history/settings/reports and test fixtures from the binary package. Verify an extracted ZIP, check its SHA-256 and test the launcher with an isolated harmless script before publishing; full cleanup is not a packaging test.
 
 ## Established product behavior
 
-- One-click includes every current Windows cleanup category and eligible machine-wide app leftovers. Preserve the sequence: application caches, app leftovers, Autodesk installers, temp files, logs/dumps, Event Viewer, privacy, Explorer recents, shadow copies, DISM, then Windows Disk Cleanup.
+- One-click includes every current Windows cleanup category and eligible machine-wide app leftovers. Preserve the sequence: application caches, app leftovers, Autodesk installers, temp files, WinREAgent leftovers, logs/dumps, Event Viewer, privacy, Explorer recents, shadow copies, DISM, then Windows Disk Cleanup.
 - The one-click preset overrides only Unjunk's local CrowdStrike Safe limits for that run. It does not alter Falcon settings, exclusions, security-product configuration or the saved profile.
 - App pruning means leftovers, not uninstalling installed applications. Revalidate successful all-user registration data before removal. Preserve registered apps, shared frameworks and protected infrastructure, including ChatGPT, Codex and Windows Terminal. Ambiguous inventories preserve data.
 - Close apps is enabled by default. Use existing mapped-process/session protections and the normal-close-then-terminate behavior. Autodesk cleanup may stop its Access updater service/UI, but must preserve license-manager files and active installers.
@@ -37,6 +37,12 @@ Build the launcher with `Build.ps1` in a fresh source copy. Package the executab
 - Event Viewer includes scanned security/audit and security-product channels through supported Windows APIs, without disabling logging or changing permissions/settings. Keep partial/error reporting honest.
 - Preserve scanned-file boundaries, exclusions, identity checks, reparse-point protection and locked/changed-file handling. Do not replace them with recursive deletion of live application trees or raw WindowsApps/WinSxS/Installer directories.
 - Keep DISM and Disk Cleanup progress visible and sequential. Preserve maintenance locking, cancellation boundaries and exit-code reporting; do not force-terminate servicing to release a busy lock.
+
+## Windows recovery-update leftovers: v54 scope
+
+`Unjunk.Core.psm1` catalogs only the literal system-drive `$WinREAgent` root as a Review target. Windows category `winre-agent` is separate from native Disk Cleanup and automatically included by Clean all and one-click, after temp files. Use the existing scanned-file engine, including exclusions, identities and no-link checks. Do not expand the dollar sign as a PowerShell variable, target the recovery partition or delete raw recovery/servicing trees.
+
+Require elevation and verify pending CBS/Windows Update restart markers, Windows setup state, active servicing processes, the registered ReAgent.xml recovery paths and supported `Get-WindowsImage -Mounted` inventory. Unknown/unavailable status, references into this folder or mounted images using it block cleanup. Recheck before deleting each file; never stop servicing, unmount images, alter recovery configuration or queue these files for reboot deletion. A blocked scan preserves its reason until a fresh scan; Windows results and timeline report skipped work instead of success. Empty directory shells may remain. `tests/WinREAgent.Tests.ps1` mocks Windows providers and deletes only fixture files; never use the live recovery folder as a test fixture.
 
 ## Cinebench 2026: v53 scope
 
@@ -73,6 +79,8 @@ $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.ex
 Run checks relevant to the change; the README lists the remaining focused suites. For timeline layout changes, `History.Gui.Tests.ps1 -RenderDirectory <directory>` renders an offscreen PNG for inspection. Before publishing v52, all 21 fixture suites passed, including 28 timeline checks; the timeline was also visually checked against saved history at a narrow width. Filesystem suites initially blocked by the sandbox/linked workspace passed when rerun from a normal directory with the required Windows filesystem capabilities.
 
 For v53, all 174 checks across the Cinebench, Core, CodexCache, CloseApps, SystemScan, OneClick and Windows suites passed. The new Cinebench suite contains 20 checks. The live Cinebench directory was previewed read-only; its contents were not used as deletion fixtures.
+
+For v54, 224 checks passed across WinREAgent, Core, Cinebench, CodexCache, CloseApps, SystemScan, OneClick, Windows and GUI callbacks. The 30 new recovery checks cover idle/busy/restart states, recovery references, mounted images, unavailable providers, per-file rechecks and preservation of links/exclusions/new/changed/locked files. The live $WinREAgent folder was inspected read-only; its contents were not deleted during development.
 
 Routine verification uses disposable fixtures, mocked providers and offscreen views. Do not run the full cleaner, clear real history/logs or remove real snapshots just to test a code change. Tests that touch files should stay within verified disposable roots.
 

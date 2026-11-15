@@ -42,18 +42,30 @@ $apps=@([pscustomobject]@{Id='leftover-data:fixture';Name='Contoso.Removed';Vers
     function script:Invoke-UnjunkEventLogCleanup {param($Logs,$State,[switch]$Confirm) [pscustomobject]@{ExitCode=0;Output='Fixture event logs';RestartRequired=$false;ItemsCleaned=1L;SkippedLogs=1}}
     function script:Invoke-UnjunkPrivacyCleanup {param($Exclusions,$State,[switch]$CloseApps,[switch]$Confirm) $script:privacyCloseApps=[bool]$CloseApps;[pscustomobject]@{ExitCode=0;Output='Fixture privacy';RestartRequired=$false;ItemsCleaned=3L;RemovedPrivacyRecords=2L;PrivacyBreakdown=@([pscustomobject]@{Name='IDM history';RemovedRecords=2});FileResult=[pscustomobject]@{DeletedFiles=1;DeletedBytes=10;SkippedFiles=0}}}
     function script:Invoke-UnjunkExplorerHistoryCleanup {param($Scan,$State,[switch]$Confirm) [pscustomobject]@{ExitCode=0;Output='Fixture Explorer recents';RestartRequired=$false;ItemsCleaned=2L;RemovedPrivacyRecords=2L;SkippedItems=1;FileResult=$null}}
-    function script:Invoke-UnjunkCleanup {param($Scan,$TargetIds,[switch]$Confirm,[switch]$CloseApps,$State) [pscustomobject]@{DeletedBytes=123;DeletedFiles=1;SkippedFiles=1;Results=@();QueuedFiles=0;QueuedBytes=0}}
+    $script:winREBlock=''
+    function script:Invoke-UnjunkCleanup {param($Scan,$TargetIds,[switch]$Confirm,[switch]$CloseApps,$State)
+        if('winre' -in $TargetIds -and $script:winREBlock) {
+            return [pscustomobject]@{DeletedBytes=0;DeletedFiles=0;SkippedFiles=1;Results=@([pscustomobject]@{Status='Skipped';Reason=$script:winREBlock});QueuedFiles=0;QueuedBytes=0}
+        }
+        [pscustomobject]@{DeletedBytes=123;DeletedFiles=1;SkippedFiles=1;Results=@();QueuedFiles=0;QueuedBytes=0}
+    }
 }
 function Scan {
     [pscustomobject]@{ScannedAt=[DateTime]::UtcNow.ToString('o');Computer=$env:COMPUTERNAME;UserSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
         CrowdStrikeSafe=$false;Cancelled=$false;Handlers=@(& $module {Get-UnjunkDiskHandlers});Apps=$apps;AppError='';Shadows=@(& $module {Get-UnjunkShadowCopies});ShadowError='';PrivacyError='';ExplorerHistoryError='';ExplorerHistory=[pscustomobject]@{RecentFiles=2;FoldersKept=4;FavoritesKept=1};EventLogError='';EventLogs=@([pscustomobject]@{Name='Security';RecordCount=10});Privacy=[pscustomobject]@{RecentLinks=1;RegistryRecords=2};
-        FileScan=[pscustomobject]@{Exclusions=@();Targets=@([pscustomobject]@{Id='temp';SystemOption='system-temp';FileCount=1;Bytes=123},[pscustomobject]@{Id='kernel';SystemOption='live-kernel';FileCount=1;Bytes=456},[pscustomobject]@{Id='memory';SystemOption='memory-dumps';FileCount=1;Bytes=789},[pscustomobject]@{Id='cache';SystemOption='app-caches';FileCount=1;Bytes=100},[pscustomobject]@{Id='logs';SystemOption='app-logs';FileCount=1;Bytes=50},[pscustomobject]@{Id='autodesk';SystemOption='autodesk-installers';FileCount=1;Bytes=75})}}
+        FileScan=[pscustomobject]@{Exclusions=@();Targets=@([pscustomobject]@{Id='temp';SystemOption='system-temp';FileCount=1;Bytes=123},[pscustomobject]@{Id='kernel';SystemOption='live-kernel';FileCount=1;Bytes=456},[pscustomobject]@{Id='memory';SystemOption='memory-dumps';FileCount=1;Bytes=789},[pscustomobject]@{Id='cache';SystemOption='app-caches';FileCount=1;Bytes=100},[pscustomobject]@{Id='logs';SystemOption='app-logs';FileCount=1;Bytes=50},[pscustomobject]@{Id='autodesk';SystemOption='autodesk-installers';FileCount=1;Bytes=75},[pscustomobject]@{Id='winre';SystemOption='winre-agent';FileCount=1;Bytes=321;MaintenanceBlock=''})}}
 }
 $scan=Scan
 $options=@(Get-UnjunkWindowsOptions)
 Assert (@($options | Where-Object Id -in @('live-kernel','memory-dumps','shadow-copies')).Count -eq 3) 'Diagnostics and shadow copies have separate selectable options'
 $plan=@(Get-UnjunkWindowsPlan -Scan $scan -OptionIds $options.Id)
 $ordered=@(Get-UnjunkWindowsPlan -Scan $scan -OptionIds $options.Id -AppIds $apps.Id)
+Assert (@($options | Where-Object Id -eq 'winre-agent').Count -eq 1 -and $ordered[4].Id -eq 'winre-agent' -and $ordered[3].Id -eq 'system-temp' -and $ordered[5].Id -eq 'app-logs') 'WinREAgent is independently selectable and runs after temp files, before logs and native maintenance'
+$winRE=@($plan | Where-Object Id -eq 'winre-agent')[0]
+Assert ($winRE.Kind -eq 'Files' -and $winRE.TargetIds.Count -eq 1 -and $winRE.TargetIds[0] -eq 'winre') 'Clean all dispatches recovery leftovers through scanned-file cleanup'
+$winRERow=@($scan.FileScan.Targets | Where-Object SystemOption -eq 'winre-agent')[0];$winRERow.MaintenanceBlock='Windows update is awaiting a restart.'
+Assert ((Get-UnjunkWindowsPlan -Scan $scan -OptionIds 'winre-agent').Detail -match 'Skipped: Windows update is awaiting a restart') 'Review dialog explains why recovery cleanup will be skipped'
+$winRERow.MaintenanceBlock=''
 Assert ($ordered[0].Id -eq 'app-caches' -and $ordered[1].Kind -eq 'AppLeftovers' -and $ordered[-3].Kind -eq 'Shadows' -and $ordered[-2].Kind -eq 'DISM' -and $ordered[-1].Kind -eq 'DiskCleanup') 'Sequence is junk, app leftovers, temp/logs/dumps, shadow copies, DISM, then Disk Cleanup'
 Assert ($ordered[-4].Kind -eq 'ExplorerHistory' -and $ordered[-5].Kind -eq 'Privacy') 'Explorer Home is cleared after private history and before native maintenance'
 $oldScan=Scan;$oldScan.Apps=@([pscustomobject]@{Id='installed:old';Name='Contoso.Active';Kind='Installed'})
@@ -72,6 +84,10 @@ $scan.CrowdStrikeSafe=$true;Reject {Invoke-UnjunkWindowsCleanup -Scan $scan -Opt
 & $module {$script:admin=$false};Reject {Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds 'winsxs' -Confirm:$false} 'Engine requires administrator access'; & $module {$script:admin=$true}
 $scan.ScannedAt=[DateTime]::UtcNow.AddMinutes(-31).ToString('o');Reject {Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds 'winsxs' -Confirm:$false} 'Expired scans cannot be cleaned';$scan=Scan
 $scan.UserSid='another-account';Reject {Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds 'winsxs' -Confirm:$false} 'Cross-account scans cannot be cleaned';$scan=Scan
+& $module {$script:winREBlock='Windows update is awaiting a restart.'}
+$result=Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds 'winre-agent' -Confirm:$false
+Assert ($result.Partial -eq 1 -and $result.Results[0].ItemsCleaned -eq 0 -and $result.Results[0].Output -match 'awaiting a restart') 'Recovery skips stay visible in results and timeline instead of reporting a successful cleanup'
+& $module {$script:winREBlock=''}
 $result=Invoke-UnjunkWindowsCleanup -Scan $scan -OptionIds $options.Id -AppIds $apps.Id -WhatIf
 Assert (@($result.Results | Where-Object Status -ne 'Preview').Count -eq 0) 'WhatIf returns a complete preview plan'
 Assert ((& $module {$script:nativeCalls.Count+$script:removals.Count+$script:writeCount}) -eq 0) 'WhatIf does not invoke Windows, remove apps or change the registry'

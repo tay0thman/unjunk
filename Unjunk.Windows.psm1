@@ -45,6 +45,7 @@ function Get-UnjunkWindowsOptions {
     @(
         [pscustomobject]@{Id='app-caches';Name='Application caches and junk';Note='Known browser, application and graphics caches. Uses the main scan settings. Close-apps can stop mapped apps first; otherwise running caches are skipped. Locked files are skipped.'},
         [pscustomobject]@{Id='system-temp';Name='User and Windows temporary files';Note='Scanned user Temp and Windows\Temp files, using your temporary-file age and exclusions. Locked or changed files are skipped.'},
+        [pscustomobject]@{Id='winre-agent';Name='Windows recovery-update leftovers ($WinREAgent)';Note='Cleans scanned contents of the system-drive $WinREAgent folder, including scratch and backup files. Skips pending update restarts, active servicing, mounted recovery images and folders still referenced by Windows recovery. Exclusions and locked/changed-file checks apply.'},
         [pscustomobject]@{Id='app-logs';Name='Application logs and error reports';Note='Known application diagnostic logs and crash reports of all ages. Includes Autodesk reports, Google Drive logs, Zoom logs and user crash dumps. Event Viewer channels are handled by their separate cleanup option.'},
         [pscustomobject]@{Id='privacy';Name='Privacy: IDM, recents and hidden history';Note='Includes Prefetch, recent files/programs, IDM completed-download/URL/folder history, ShellBags, UserAssist/MUI, BAM/DAM, compatibility cache/PCA logs and local Windows activity databases. Close apps also closes IDM first. Keeps Jump Lists, downloaded files and unfinished transfers. ShellBag cleanup resets per-folder views; Prefetch rebuilds. Locked stores are reported.'},
         [pscustomobject]@{Id='explorer-recents';Name='Explorer Home recent files (keep pins)';Note='Clears usage history for scanned, unpinned recent files; they can appear again when reopened. Keeps all folders, pinned favorites, original files and other apps'' Jump Lists. This explicit exception updates Explorer''s own recent-history store; it does not delete Jump List databases or hide future opens.'},
@@ -124,6 +125,7 @@ function Get-UnjunkWindowsPlan {
         switch($id) {
             'app-caches' { $rows=@($Scan.FileScan.Targets | Where-Object SystemOption -eq $id) }
             'system-temp' { $rows=@($Scan.FileScan.Targets | Where-Object SystemOption -eq $id) }
+            'winre-agent' { $rows=@($Scan.FileScan.Targets | Where-Object SystemOption -eq $id) }
             'app-logs' { $rows=@($Scan.FileScan.Targets | Where-Object SystemOption -eq $id) }
             'autodesk-installers' { $rows=@($Scan.FileScan.Targets | Where-Object SystemOption -eq $id) }
             'event-viewer' {
@@ -157,6 +159,11 @@ function Get-UnjunkWindowsPlan {
             $count=[long](($rows | Measure-Object FileCount -Sum).Sum)
             $bytes=[long](($rows | Measure-Object Bytes -Sum).Sum)
             $detail+="`r`n$count scanned files / $(Format-UnjunkSize $bytes)."
+            if($id -eq 'winre-agent') {
+                foreach($row in $rows) {
+                    if($null -ne $row.PSObject.Properties['MaintenanceBlock'] -and $row.MaintenanceBlock) { $detail+="`r`nSkipped: "+$row.MaintenanceBlock }
+                }
+            }
         }
         if($kind -eq 'Shadows') {
             $detail+="`r`n$(@($Scan.Shadows).Count) snapshot(s):`r`n"+(($Scan.Shadows | ForEach-Object {$_.Id+' | '+$_.Volume+' | '+$_.Created}) -join "`r`n")
@@ -182,7 +189,7 @@ function Get-UnjunkWindowsPlan {
     # One ordered sequence for preview and execution: junk, leftovers, temp/logs, snapshots, DISM, Disk Cleanup.
     return @($jobs | Sort-Object @{Expression={
         if($_.Id -eq 'app-caches'){0}elseif($_.Kind -eq 'AppLeftovers'){1}elseif($_.Id -eq 'autodesk-installers'){1.5}elseif($_.Id -eq 'system-temp'){2}
-        elseif($_.Id -eq 'app-logs'){3}elseif($_.Id -eq 'live-kernel'){4}elseif($_.Id -eq 'memory-dumps'){5}
+        elseif($_.Id -eq 'winre-agent'){2.5}elseif($_.Id -eq 'app-logs'){3}elseif($_.Id -eq 'live-kernel'){4}elseif($_.Id -eq 'memory-dumps'){5}
         elseif($_.Kind -eq 'EventLogs'){5.5}elseif($_.Kind -eq 'Privacy'){6}elseif($_.Kind -eq 'ExplorerHistory'){6.1}elseif($_.Kind -eq 'Shadows'){7}elseif($_.Kind -eq 'DISM'){8}else{9}
     }})
 }
@@ -348,6 +355,10 @@ function Invoke-UnjunkWindowsCleanup {
                         if(-not $job.TargetIds.Count) { throw 'System-file targets are missing. Scan again.' }
                         $fileResult=Invoke-UnjunkCleanup -Scan $Scan.FileScan -TargetIds $job.TargetIds -CloseApps:$CloseApps -Confirm:$false -State $State
                         $native=[pscustomobject]@{ExitCode=0;Output="Deleted $(Format-UnjunkSize $fileResult.DeletedBytes) / $($fileResult.DeletedFiles) files; $($fileResult.SkippedFiles) skipped.";RestartRequired=$false}
+                        if($job.Id -eq 'winre-agent') {
+                            $reasons=@($fileResult.Results | Where-Object Status -eq 'Skipped' | Select-Object -ExpandProperty Reason -Unique)
+                            if($reasons.Count) { $native.Output+=' '+($reasons -join ' ') }
+                        }
                     }
                     'DiskCleanup' { $native=Invoke-UnjunkDiskCleanup -Handlers $job.Handlers -State $State }
                     'DISM' { $native=Invoke-UnjunkWindowsNative -Executable Dism.exe -Arguments @('/Online','/Cleanup-Image','/StartComponentCleanup','/NoRestart','/English') -State $State }

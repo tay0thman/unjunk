@@ -56,6 +56,63 @@ function Test-UnjunkNoLinks([string]$Path) {
     return $true
 }
 
+function Get-UnjunkWinREAgentRoot {
+    # The dollar sign is literal; never expand it as a PowerShell variable.
+    Get-UnjunkFullPath (Join-Path ($env:SystemDrive+'\') '$WinREAgent')
+}
+
+function Test-UnjunkWinREAgentTarget($Target) {
+    (Get-UnjunkFullPath $Target.Root) -eq (Get-UnjunkWinREAgentRoot)
+}
+
+function Get-UnjunkWinREAgentActivityBlockReason {
+    # Read-only checks. Do not stop servicing or queue recovery files for reboot deletion.
+    if(-not (Test-UnjunkAdministrator)) { return 'Run Unjunk as administrator to check recovery-update files.' }
+    foreach($key in @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootInProgress',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\PackagesPending',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')) {
+        if(Test-Path -LiteralPath $key -ErrorAction Stop) { return 'Windows update or servicing is awaiting a restart; restart and scan again.' }
+    }
+    $setup=Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\Setup' -ErrorAction Stop
+    foreach($name in @('SystemSetupInProgress','UpgradeInProgress')) {
+        if($null -ne $setup.PSObject.Properties[$name] -and [int]$setup.$name -ne 0) { return 'Windows setup is in progress; wait for it to finish and scan again.' }
+    }
+    $busy=@(Get-Process -ErrorAction Stop | Where-Object ProcessName -in @(
+        'dism','DismHost','TiWorker','TrustedInstaller','SetupHost','SetupPrep','Windows10UpgraderApp',
+        'MoUsoCoreWorker','cleanmgr','WinREAgent','ReAgentc','wusa') | Select-Object -ExpandProperty ProcessName -Unique)
+    if($busy.Count) { return ('Windows servicing is running: '+($busy -join ', ')+'. Wait for it to finish and scan again.') }
+    return ''
+}
+
+function Get-UnjunkWinREAgentBlockReason {
+    try {
+        $reason=Get-UnjunkWinREAgentActivityBlockReason
+        if($reason) { return $reason }
+        $root=Get-UnjunkWinREAgentRoot
+        # Check the registered recovery location, not a backup ReAgent.xml inside the cleanup folder.
+        [xml]$recovery=Get-Content -LiteralPath (Join-Path $env:SystemRoot 'System32\Recovery\ReAgent.xml') -Raw -ErrorAction Stop
+        if($null -eq $recovery.SelectSingleNode('/WindowsRE/WinreLocation')) { throw 'Recovery configuration is incomplete.' }
+        foreach($location in @($recovery.SelectNodes('/WindowsRE/*[@path]'))) {
+            if($location.GetAttribute('path') -match '(?i)(^|[\\/])\$WinREAgent([\\/]|$)') {
+                return 'Windows recovery still references $WinREAgent; its files are preserved.'
+            }
+        }
+        # Supported, read-only DISM inventory; never unmount images or discard pending work.
+        foreach($mount in @(Get-WindowsImage -Mounted -ErrorAction Stop)) {
+            $mountPath=Get-UnjunkFullPath $mount.Path
+            $imagePath=Get-UnjunkFullPath $mount.ImagePath
+            if((Test-UnjunkWithin $mountPath $root) -or (Test-UnjunkWithin $root $mountPath) -or (Test-UnjunkWithin $imagePath $root)) {
+                return 'A mounted Windows image uses $WinREAgent; its files are preserved.'
+            }
+        }
+        return Get-UnjunkWinREAgentActivityBlockReason
+    } catch {
+        return ('Could not verify Windows recovery-update status; files preserved. '+$_.Exception.Message)
+    }
+}
+
 function New-UnjunkTarget {
     param([string]$Name, [string]$Category, [string]$Root, [string[]]$Processes = @(),
         [string]$Risk = 'Cache', [int]$MinimumAgeDays = 0, [string]$Note = 'Recreated when the application needs it.',
@@ -317,6 +374,7 @@ function Get-UnjunkTargets {
         $list.Add((New-UnjunkTarget "$folder extracted installers" 'Downloaded installers' "$env:SystemDrive\$folder" -Risk Review -MinimumAgeDays 30 -Note 'Review the file preview. Keep if an installation is pending or you need offline setup media.'))
     }
     $list.Add((New-UnjunkTarget 'Autodesk extracted installers' 'Downloaded installers' "$env:SystemDrive\Autodesk" @('AdskInstall','AdskInstaller','AdskAccessUIHost','AdskAccessServiceHost','Installer','Setup','msiexec') -Risk Review -MinimumAgeDays 0 -Note 'Extracted installation/download files of all ages, including WI and Access. Close apps stops the Autodesk Access updater service and UI first (administrator required), without changing startup settings. Active installers and Network License Manager are preserved. Empty extraction folders are removed.'))
+    $list.Add((New-UnjunkTarget 'Windows recovery-update leftovers ($WinREAgent)' 'Windows maintenance' (Get-UnjunkWinREAgentRoot) -Risk Review -Note 'Scanned contents of the system-drive $WinREAgent folder. Includes update scratch files and backup images. Requires administrator access and verified idle servicing, no pending Windows update restart, and no recovery location or mounted image using this folder. Skipped while these checks cannot be completed.'))
     foreach ($entry in @(
         @('Application crash dumps', "$env:LOCALAPPDATA\CrashDumps"),
         @('Windows minidumps', "$env:SystemRoot\Minidump"),
@@ -457,7 +515,7 @@ function Get-UnjunkTargetScan {
     $root = Assert-UnjunkRoot $Target.Root
     $files = New-Object 'System.Collections.Generic.List[object]'
     $issues = New-Object 'System.Collections.Generic.List[string]'
-    $bytes = 0L; $links = 0; $recent = 0; $excluded = 0; $exists = $false
+    $bytes = 0L; $links = 0; $recent = 0; $excluded = 0; $exists = $false; $maintenanceBlock=''
     $age = $Target.MinimumAgeDays
     if ($Target.Risk -eq 'Temporary') { $age = [Math]::Max(0, $TempAgeDays) }
     if ($CrowdStrikeSafe) { $age=[Math]::Max(7,$age) }
@@ -468,7 +526,10 @@ function Get-UnjunkTargetScan {
         if($policyBlocked) { throw [OperationCanceledException]::new('Outside the CrowdStrike Safe cleaning profile.') }
         $rootItem = Get-Item -LiteralPath $root -Force -ErrorAction Stop
         $exists = $true
-        if (Test-UnjunkNoLinks $root) { if(-not $Target.ScanOnly) { $stack.Push($root) } } else { $links++ }
+        if (Test-UnjunkNoLinks $root) {
+            if(Test-UnjunkWinREAgentTarget $Target) { $maintenanceBlock=Get-UnjunkWinREAgentBlockReason }
+            if(-not $Target.ScanOnly -and -not $maintenanceBlock) { $stack.Push($root) }
+        } else { $links++ }
     } catch [OperationCanceledException] {
         # Policy-blocked targets are not enumerated, even when running elevated.
     } catch [System.Management.Automation.ItemNotFoundException] {
@@ -492,9 +553,9 @@ function Get-UnjunkTargetScan {
         } catch { if ($issues.Count -lt 50) { $issues.Add($_.Exception.Message) } }
     }
     $running = @(Get-UnjunkRunningApps $Target)
-    $status = if ($Target.ScanOnly) { 'Inventory only' } elseif ($policyBlocked) { 'Blocked by Safe profile' } elseif ($issues.Count) { 'Partial / access errors' } elseif ($links) { 'Links skipped' } elseif (-not $exists) { 'Not present' } elseif ($running.Count) { 'Close: ' + ($running -join ', ') } elseif ($files.Count) { 'Ready' } else { 'No eligible files' }
+    $status = if ($Target.ScanOnly) { 'Inventory only' } elseif ($policyBlocked) { 'Blocked by Safe profile' } elseif ($maintenanceBlock) { 'Skipped: '+$maintenanceBlock } elseif ($issues.Count) { 'Partial / access errors' } elseif ($links) { 'Links skipped' } elseif (-not $exists) { 'Not present' } elseif ($running.Count) { 'Close: ' + ($running -join ', ') } elseif ($files.Count) { 'Ready' } else { 'No eligible files' }
     [pscustomobject]@{ Id=$Target.Id; Name=$Target.Name; Category=$Target.Category; Root=$root; Risk=$Target.Risk;
-        Recommended=($Target.Recommended -and -not $policyBlocked); CanSelect=(-not $Target.ScanOnly); PolicyBlocked=$policyBlocked; Note=$Target.Note; Bytes=$bytes; Size=(Format-UnjunkSize $bytes); FileCount=$files.Count;
+        Recommended=($Target.Recommended -and -not $policyBlocked); CanSelect=(-not $Target.ScanOnly -and -not $maintenanceBlock); MaintenanceBlock=$maintenanceBlock; PolicyBlocked=$policyBlocked; Note=$Target.Note; Bytes=$bytes; Size=(Format-UnjunkSize $bytes); FileCount=$files.Count;
         Files=$files.ToArray(); RunningApps=$running; Status=$status; Issues=$issues.ToArray(); SkippedLinks=$links;
         SkippedRecent=$recent; SkippedExcluded=$excluded; MinimumAgeDays=$age; FilePattern=$Target.FilePattern; Recurse=$Target.Recurse; ScanOnly=$Target.ScanOnly; Selected=$false }
 }
@@ -534,6 +595,7 @@ function Invoke-UnjunkSystemFileScan {
     $roots[(Get-UnjunkFullPath "$env:SystemRoot\MEMORY.DMP")]='memory-dumps'
     $roots[(Get-UnjunkFullPath "$env:SystemRoot\Minidump")]='memory-dumps'
     $roots[(Get-UnjunkFullPath "$env:SystemDrive\Autodesk")]='autodesk-installers'
+    $roots[(Get-UnjunkWinREAgentRoot)]='winre-agent'
     $rows=@(foreach($target in @(Get-UnjunkTargets)) {
         if($State.Cancel) { break }
         if(-not $roots.ContainsKey($target.Root)) {
@@ -708,6 +770,14 @@ function Invoke-UnjunkCleanup {
     foreach($row in $selected) {
         if ($State.Cancel) { break }
         $target=$catalog[$row.Id]
+        $winREAgent=Test-UnjunkWinREAgentTarget $target
+        if($winREAgent) {
+            $block=if($null -ne $row.PSObject.Properties['MaintenanceBlock']){[string]$row.MaintenanceBlock}else{''}
+            if(-not $block -and $row.FileCount -gt 0) { $block=Get-UnjunkWinREAgentBlockReason }
+            if($block) {
+                $results.Add([pscustomobject]@{Path=$row.Root;Bytes=0L;QueuedBytes=0L;Status='Skipped';Reason=$block}); $processed+=$row.FileCount; continue
+            }
+        }
         if(-not (Test-UnjunkRhinoTargetCurrent $target)) {
             $results.Add([pscustomobject]@{Path=$row.Root;Bytes=0L;QueuedBytes=0L;Status='Skipped';Reason='Plug-in package selection changed; scan again.'}); continue
         }
@@ -736,6 +806,13 @@ function Invoke-UnjunkCleanup {
         $lastAppCheck=[DateTime]::UtcNow
         foreach($file in $row.Files) {
             if ($State.Cancel) { break }
+            if($winREAgent) {
+                $State.Message='Checking Windows recovery-update status...'
+                $block=Get-UnjunkWinREAgentBlockReason
+                if($block) {
+                    $results.Add([pscustomobject]@{Path=$row.Root;Bytes=0L;QueuedBytes=0L;Status='Skipped';Reason=$block}); break
+                }
+            }
             if($autodesk -or ($canClose -and ([DateTime]::UtcNow-$lastAppCheck).TotalSeconds -ge 1)) {
                 $lastAppCheck=[DateTime]::UtcNow
                 if(@(Get-UnjunkRunningApps $target).Count) {

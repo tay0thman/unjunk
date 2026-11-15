@@ -65,7 +65,7 @@ try {
     if(-not $ConfirmationOnly){
         Assert ($panel.CleanAllCheck.IsEnabled -and $panel.Options[0].Box.IsEnabled -and -not $panel.RunButton.IsEnabled) 'Cleanup options are clickable before scanning; execution still requires a scan'
         Click $panel.CleanAllCheck
-        Assert (@($panel.Options | Where-Object {$_.Box.IsChecked}).Count -eq 14 -and -not $panel.RunButton.IsEnabled) 'A real Clean all click selects options before scanning without enabling execution'
+        Assert (@($panel.Options | Where-Object {$_.Box.IsChecked}).Count -eq $panel.Options.Count -and @($panel.Options | Where-Object {$_.Id -eq 'winre-agent' -and $_.Box.IsChecked}).Count -eq 1 -and -not $panel.RunButton.IsEnabled) 'A real Clean all click includes recovery leftovers before scanning without enabling execution'
         Click $panel.CleanAllCheck
         $option=@($panel.Options | Where-Object Id -eq 'winsxs')[0]
         Click $option.Box
