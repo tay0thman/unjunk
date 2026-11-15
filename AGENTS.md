@@ -1,6 +1,6 @@
 # Unjunk contributor handoff
 
-Updated 2026-11-09. The current application is v52, a native Windows PowerShell/WPF cleanup dashboard. Read `README.md` for the full behavior and commands; this file records the development map and decisions that future changes must preserve. Update this handoff when those decisions change.
+Updated 2026-11-14. The current application is v53, a native Windows PowerShell/WPF cleanup dashboard. Read `README.md` for the full behavior and commands; this file records the development map and decisions that future changes must preserve. Update this handoff when those decisions change.
 
 ## Project map
 
@@ -23,7 +23,7 @@ Keep `Unjunk.exe`, `Launch Unjunk.cmd`, `One-click full clean.cmd` and the runti
 
 ## Release delivery
 
-Compiled launchers are ignored in source control. Publish the runnable Windows ZIP as a GitHub Release asset and keep the README download link current. For v52 the asset is `Unjunk-v52-windows.zip` under tag `v52`; users extract the entire ZIP and run `Unjunk.exe`.
+Compiled launchers are ignored in source control. Publish the runnable Windows ZIP as a GitHub Release asset and keep the README download link current. For v53 the asset is `Unjunk-v53-windows.zip` under tag `v53`; users extract the entire ZIP and run `Unjunk.exe`.
 
 Build the launcher with `Build.ps1` in a fresh source copy. Package the executable, current runtime scripts/modules, `Unjunk.ExplorerRecentNative.cs`, launch commands and usage instructions together. The EXE is not standalone. Exclude archived scripts, local history/settings/reports and test fixtures from the binary package. Verify an extracted ZIP, check its SHA-256 and test the launcher with an isolated harmless script before publishing; full cleanup is not a packaging test.
 
@@ -37,6 +37,10 @@ Build the launcher with `Build.ps1` in a fresh source copy. Package the executab
 - Event Viewer includes scanned security/audit and security-product channels through supported Windows APIs, without disabling logging or changing permissions/settings. Keep partial/error reporting honest.
 - Preserve scanned-file boundaries, exclusions, identity checks, reparse-point protection and locked/changed-file handling. Do not replace them with recursive deletion of live application trees or raw WindowsApps/WinSxS/Installer directories.
 - Keep DISM and Disk Cleanup progress visible and sequential. Preserve maintenance locking, cancellation boundaries and exit-code reporting; do not force-terminate servicing to release a busy lock.
+
+## Cinebench 2026: v53 scope
+
+The user selected generated caches and logs, not a full profile reset. Discover only direct `%APPDATA%\Maxon\Cinebench2026_win_x86_64_<8 hex digits>` profiles and explicit Redshift/WebView cache or diagnostic leaves. Keep preferences, results, custom data, libraries, plug-ins, repositories, description databases and WebView credentials/storage. Do not follow linked profiles or cache roots. Cache targets participate in one-click's cache stage and existing close-apps behavior using `Cinebench*`; diagnostic targets use the existing logs stage and age rules. Do not map generic `msedgewebview2`, Cinema 4D or Maxon services to this profile. `tests/Cinebench.Tests.ps1` covers discovery, data preservation, links, process gating and both cleanup routes with disposable fixtures.
 
 ## Explorer recents: preserve the v51 repair
 
@@ -67,6 +71,8 @@ $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.ex
 ```
 
 Run checks relevant to the change; the README lists the remaining focused suites. For timeline layout changes, `History.Gui.Tests.ps1 -RenderDirectory <directory>` renders an offscreen PNG for inspection. Before publishing v52, all 21 fixture suites passed, including 28 timeline checks; the timeline was also visually checked against saved history at a narrow width. Filesystem suites initially blocked by the sandbox/linked workspace passed when rerun from a normal directory with the required Windows filesystem capabilities.
+
+For v53, all 174 checks across the Cinebench, Core, CodexCache, CloseApps, SystemScan, OneClick and Windows suites passed. The new Cinebench suite contains 20 checks. The live Cinebench directory was previewed read-only; its contents were not used as deletion fixtures.
 
 Routine verification uses disposable fixtures, mocked providers and offscreen views. Do not run the full cleaner, clear real history/logs or remove real snapshots just to test a code change. Tests that touch files should stay within verified disposable roots.
 

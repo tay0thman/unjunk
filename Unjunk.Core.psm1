@@ -199,6 +199,48 @@ function Get-UnjunkCodexCacheTargets {
     }
 }
 
+function Get-UnjunkCinebenchTargets {
+    # Cinebench's Maxon profile contains preferences and assets as well as disposable caches.
+    $maxon=Join-Path $env:APPDATA 'Maxon'
+    try {
+        if(-not (Test-Path -LiteralPath $maxon -PathType Container) -or -not (Test-UnjunkNoLinks $maxon)){return}
+        $profiles=@(Get-ChildItem -LiteralPath $maxon -Directory -Filter 'Cinebench2026_win_x86_64_*' -ErrorAction Stop)
+    } catch { return }
+    foreach($profile in $profiles){
+        if($profile.Name -notmatch '^Cinebench2026_win_x86_64_[0-9a-f]{8}$'){continue}
+        try {if(-not (Test-UnjunkNoLinks $profile.FullName)){continue}} catch {continue}
+        $label='Cinebench 2026 / '+$profile.Name.Substring($profile.Name.Length-8)
+        $cachePaths=@('Redshift\Cache','EBWebView\ShaderCache','EBWebView\GrShaderCache','EBWebView\GPUPersistentCache')
+        $web=Join-Path $profile.FullName 'EBWebView'
+        try {
+            if((Test-Path -LiteralPath $web -PathType Container) -and (Test-UnjunkNoLinks $web)){
+                foreach($webProfile in @(Get-ChildItem -LiteralPath $web -Directory -ErrorAction Stop | Where-Object {$_.Name -eq 'Default' -or $_.Name -match '^Profile \d+$'})){
+                    if(-not (Test-UnjunkNoLinks $webProfile.FullName)){continue}
+                    foreach($leaf in @('Cache','Code Cache','GPUCache','DawnWebGPUCache','DawnGraphiteCache')){
+                        $cachePaths+= 'EBWebView\'+$webProfile.Name+'\'+$leaf
+                    }
+                }
+            }
+        } catch { } # Missing/inaccessible web profiles never broaden cleanup to their parent.
+        foreach($relative in $cachePaths){
+            $path=Join-Path $profile.FullName $relative
+            try {
+                if((Test-Path -LiteralPath $path -PathType Container) -and (Test-UnjunkNoLinks $path)){
+                    New-UnjunkTarget ($label+' / '+$relative) 'Creative apps' $path @('Cinebench*') -Note 'Generated Cinebench/Redshift or WebView cache only. Close Cinebench or enable Close apps before cleanup. Caches rebuild on the next run; benchmark preparation may take longer. Preferences, results and custom assets are preserved.'
+                }
+            } catch { }
+        }
+        foreach($relative in @('Redshift\Log','_bugreports','EBWebView\Crashpad\reports')){
+            $path=Join-Path $profile.FullName $relative
+            try {
+                if((Test-Path -LiteralPath $path -PathType Container) -and (Test-UnjunkNoLinks $path)){
+                    New-UnjunkTarget ($label+' / '+$relative) 'Diagnostics' $path @('Cinebench*') -Risk Diagnostics -MinimumAgeDays 30 -Note 'Cinebench log/crash-report files only. Main scan keeps the 30-day diagnostic cutoff; explicit Windows logs cleanup and one-click include all ages. Removing these loses diagnostic history. Cinebench must be closed.'
+                }
+            } catch { }
+        }
+    }
+}
+
 function Get-UnjunkTargets {
     $list = New-Object 'System.Collections.Generic.List[object]'
     $list.Add((New-UnjunkTarget 'User temporary files' 'Windows' "$env:LOCALAPPDATA\Temp" -Risk Temporary -MinimumAgeDays 7 -Note 'Only files older than the chosen age. Locked files are skipped.'))
@@ -234,6 +276,7 @@ function Get-UnjunkTargets {
         }
     }
     foreach($target in @(Get-UnjunkCodexCacheTargets)) { $list.Add($target) }
+    foreach($target in @(Get-UnjunkCinebenchTargets)) { $list.Add($target) }
     foreach ($entry in @(
         @('pip download cache', 'Developer', "$env:LOCALAPPDATA\pip\Cache", 'python*'),
         @('NuGet HTTP cache', 'Developer', "$env:LOCALAPPDATA\NuGet\v3-cache", 'dotnet'),

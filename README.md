@@ -1,4 +1,4 @@
-# Unjunk v52
+# Unjunk v53
 
 A native Windows cleanup dashboard built with PowerShell and WPF. Scan C:, inspect the results, and choose which files to remove.
 
@@ -6,7 +6,7 @@ For future development, see [AGENTS.md](AGENTS.md) for the project map, establis
 
 ## Download
 
-**[Download Unjunk v52 for Windows](https://github.com/tay0thman/unjunk/releases/download/v52/Unjunk-v52-windows.zip)**
+**[Download Unjunk v53 for Windows](https://github.com/tay0thman/unjunk/releases/download/v53/Unjunk-v53-windows.zip)**
 
 Extract the entire ZIP into a folder, then double-click **Unjunk.exe**. The package includes the executable and all required scripts; keep those files together. No build step is needed for the release download.
 
@@ -106,6 +106,7 @@ References: [IDM URL-history location](https://www.internetdownloadmanager.com/r
 - Claude, Vagon, Gemini, Oculus, Calibrite, Discord, Slack, VS Code, and Vectorworks Install Manager cache leaves.
 - **Codex caches** appear under **Desktop apps** (search `Codex`) and are included in **Application caches** and the one-click preset. Handles both `%APPDATA%\Codex` and the Windows app's `LocalCache\Roaming\Codex` storage: browser HTTP/code/GPU caches, Dawn caches, and shader caches, including the in-app browser partition. Only existing, explicitly named cache folders are offered. Close Codex first or enable the close-apps option; its `ChatGPT.exe`, `Codex.exe` and computer-use helper processes must exit before immediate cleanup. Chats, workspaces, settings, cookies/sign-in, browser storage, extensions, runtimes and the entire `.codex` home are preserved. Linked folders are skipped, including relocated `.codex\cache` storage. CrowdStrike Safe keeps the same seven-day minimum; one-click uses its existing full-clean override.
 - Targeted Adobe, Revit, Bluebeam, Rhino, V-Ray, Teams, Epic, Steam, NVIDIA, DirectX, pip, and NuGet caches.
+- **Cinebench 2026** profiles under `%APPDATA%\Maxon\Cinebench2026_win_x86_64_<8-digit build hash>`: Redshift texture/mesh/shader cache and named WebView HTTP/code/GPU/shader caches appear under Creative apps. Redshift logs, Cinebench crash reports and WebView crash reports appear under Diagnostics. One-click automatically includes them through its application-cache and log stages. Close apps handles `Cinebench*` processes; other Maxon applications and shared WebView processes are not mapped to this target. Preferences, benchmark results, plug-ins, libraries, user repositories, description databases and browser sign-in/storage data are preserved. Linked folders are skipped. Main scan diagnostics retain their 30-day cutoff; explicit Windows logs cleanup/one-click include all ages. Cache cleanup retains the seven-day cutoff in CrowdStrike Safe mode; Standard and one-click include newly generated caches. Redshift rebuilds missing caches on the next benchmark. [Maxon cache documentation](https://help.maxon.net/c4d/2025/en-us/Content/html/PREFSREDSHIFT.html).
 - Separate review items for downloaded Vectorworks Cloud, Calibrite, Vagon, and Upscayl installers, plus old driver/setup extraction folders.
 - **Rhino 9 settings backup ZIPs**, under Creative apps, matches only `*.zip` files directly in `%APPDATA%\McNeel\Rhinoceros\9.0`. No subfolders are scanned for this target. It preserves active settings, plug-ins, UI files, and non-ZIP files. Because these are potential restore copies, it is an unchecked Review item available in Standard mode only; close Rhino and review the filenames before selecting. No age limit is applied. It is not eligible for reboot deletion. If no ZIPs exist, enable **Show empty** to see the target.
 - **Rhino plug-ins** inventories `%APPDATA%\McNeel\Rhinoceros\packages\9.0` and offers one Review target per verifiably older version. It preserves the version selected by `manifest.txt`, the highest installed version, and the highest stable version; equivalent build-metadata versions and unknown layouts are kept. Numeric 3/4-part versions and prerelease identifiers are compared by version precedence, not text or dates. Missing/ambiguous pointers, invalid manifests, and linked folders are preserved. The inventory row explains preserved packages even when there is nothing to clean. Standard mode and explicit selection are required; reboot deletion is blocked. Rhino/Yak must be closed. The active pointer and eligibility are rechecked before cleanup, with an additional active-pointer/process check between files. Only scanned files and then empty directories under the selected old-version root are removed; parent package folders and active pointers are preserved. This removes rollback copies, so keep any older plug-in version you still need. [McNeel's explanation of the active-version pointer](https://discourse.mcneel.com/t/docked-webview-panels-throw-plugin-id-already-in-use-on-yak-update/216878/2).
@@ -191,6 +192,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\ActivityHistory.
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\ExplorerHistory.Tests.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\SystemScan.Tests.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexCache.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Cinebench.Tests.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\CloseApps.Tests.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Autodesk.Tests.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\AutodeskService.Tests.ps1
